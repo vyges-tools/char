@@ -65,7 +65,7 @@ Reach for it when you need a cell's timing model and don't already have a
 trustworthy one — a **custom or ECO cell**, a **new PVT corner**, or to
 **verify** a vendor `.lib` against first-principles SPICE. It runs **after** you
 have the cell netlist + device models and **before** STA, which cannot run
-without a `.lib`. The Liberty it emits is exactly what [`vyges-sta-si`](#) (or
+without a `.lib`. The Liberty it emits is exactly what `vyges-sta-si` (or
 any STA tool) consumes. Most flows consume the foundry's shipped `.lib`
 directly and only reach for `vyges-char` to fill those gaps.
 
