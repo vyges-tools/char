@@ -94,6 +94,30 @@ parameter, so:
 output table-by-table against the foundry reference `.lib` is the recommended
 way to confirm a characterization is in tolerance.
 
+## Open core, certified fab plugins
+
+`vyges-char` is open and contains **no foundry-confidential data**. It runs out
+of the box on open PDKs (sky130, gf180) using their published device models.
+
+Getting *sign-off-grade* libraries on a **commercial** node takes two things
+beyond the tool running: the output must be **correlated to that foundry's
+silicon**, and the foundry must **accept the flow under an agreement**. Both live
+in a **separate, per-foundry plugin** — never in this repository:
+
+- the open tool defines a published **characterization contract** (the job +
+  models/corner setup and its calibration extensions);
+- a **certified per-foundry plugin** supplies the silicon-correlated corner setup
+  and reference for a specific node, delivered **under that foundry's NDA**;
+- the open engine loads it through the contract and never embeds or references
+  any foundry-confidential infrastructure. Each foundry has its own plugin.
+
+So the **engine and the contract are open for everyone**, while the **per-foundry
+correlation is gated** to those with the agreement — the same way a commercial
+characterizer separates its engine from the foundry-delivered calibration, except
+here the engine is open. Use `vyges-char` today on open PDKs and to
+characterize/verify custom cells on any PDK you have; certified sign-off
+libraries on a commercial node come with that node's plugin.
+
 ## Current state (2026-05-30)
 
 v0 emits an **NLDM** (delay + transition lookup tables) from a single-stage
