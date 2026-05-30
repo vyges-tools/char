@@ -55,6 +55,20 @@ Files in / files out; the simulator is driven as a subprocess. The pure pieces
 (Liberty emit, SPICE deck gen, `.measure` parse) run offline and are unit-tested;
 only the actual sweep needs ngspice + the PDK on the host.
 
+## When & how to use it in your flow
+
+```text
+  PDK cell *.spice + device models ─[vyges-char + ngspice]─► *.lib ─► STA
+```
+
+Reach for it when you need a cell's timing model and don't already have a
+trustworthy one — a **custom or ECO cell**, a **new PVT corner**, or to
+**verify** a vendor `.lib` against first-principles SPICE. It runs **after** you
+have the cell netlist + device models and **before** STA, which cannot run
+without a `.lib`. The Liberty it emits is exactly what [`vyges-sta-si`](#) (or
+any STA tool) consumes. Most flows consume the foundry's shipped `.lib`
+directly and only reach for `vyges-char` to fill those gaps.
+
 ## Use it
 
 ```sh
