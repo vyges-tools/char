@@ -72,6 +72,7 @@ directly and only reach for `vyges-char` to fill those gaps.
 ## Use it
 
 ```sh
+# prebuilt binaries: dist/<triple>/vyges-char  (or build it yourself:)
 cargo build --release            # std-only, no external deps
 
 vyges-char run  cell.char -o cell.lib   # characterize (needs ngspice + models)
