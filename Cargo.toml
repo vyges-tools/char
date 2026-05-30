@@ -1,0 +1,15 @@
+[package]
+name = "vyges-char"
+version = "0.0.1"
+edition = "2021"
+description = "Vyges tools"
+
+# std-only (no external dependencies) so the core builds/tests offline.
+
+[[bin]]
+name = "vyges-char"
+path = "src/main.rs"
+
+[lib]
+name = "vyges_char"
+path = "src/lib.rs"
