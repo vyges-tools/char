@@ -63,6 +63,41 @@ pub fn deck(
     s
 }
 
+/// Find a cell's port list from its `.subckt` definition in a netlist.
+///
+/// Returns the pin names in declared order (e.g. sky130's
+/// `A VGND VNB VPB VPWR Y`), folding `+` continuation lines. Case-insensitive
+/// match on the cell name. `None` if the cell has no `.subckt` here.
+pub fn parse_subckt_pins(netlist: &str, cell: &str) -> Option<Vec<String>> {
+    let lines: Vec<&str> = netlist.lines().collect();
+    for (i, raw) in lines.iter().enumerate() {
+        let line = raw.trim();
+        let mut toks = line.split_whitespace();
+        let Some(kw) = toks.next() else { continue }; // skip blank lines
+        if !kw.eq_ignore_ascii_case(".subckt") {
+            continue;
+        }
+        let Some(name) = toks.next() else { continue };
+        if !name.eq_ignore_ascii_case(cell) {
+            continue;
+        }
+        let mut pins: Vec<String> = toks.map(|s| s.to_string()).collect();
+        // fold `+` continuation lines
+        for cont in &lines[i + 1..] {
+            let c = cont.trim();
+            if let Some(rest) = c.strip_prefix('+') {
+                pins.extend(rest.split_whitespace().map(|s| s.to_string()));
+            } else {
+                break;
+            }
+        }
+        // a parameterized subckt may carry `name=value` tails — drop them
+        pins.retain(|p| !p.contains('='));
+        return Some(pins);
+    }
+    None
+}
+
 /// Parse ngspice `.measure` results from stdout/log.
 /// Lines look like: `prop_delay           =  1.234560e-10 targ= ...`
 pub fn parse_measures(output: &str) -> HashMap<String, f64> {

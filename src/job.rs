@@ -30,7 +30,21 @@ pub struct CharJob {
     pub vdd: f64,
     pub temp: f64,
     pub models: Vec<String>,
+    pub power: Vec<String>,  // subckt pins tied to VDD (e.g. VPWR, VPB)
+    pub ground: Vec<String>, // subckt pins tied to VSS (e.g. VGND, VNB)
     pub base_dir: String,
+}
+
+/// sky130-class defaults so the common case needs no `power:`/`ground:` keys.
+fn default_power() -> Vec<String> {
+    ["VPWR", "VPB", "VDD", "VCCD", "VCC"].iter().map(|s| s.to_string()).collect()
+}
+fn default_ground() -> Vec<String> {
+    ["VGND", "VNB", "VSS", "VSSD", "GND"].iter().map(|s| s.to_string()).collect()
+}
+
+fn names(s: &str) -> Vec<String> {
+    s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
 #[derive(Debug)]
@@ -91,6 +105,8 @@ impl CharJob {
                 .get("models")
                 .map(|m| m.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default(),
+            power: kv.get("power").map(|s| names(s)).unwrap_or_else(default_power),
+            ground: kv.get("ground").map(|s| names(s)).unwrap_or_else(default_ground),
             base_dir: base_dir.to_string(),
         };
         job.validate()?;
