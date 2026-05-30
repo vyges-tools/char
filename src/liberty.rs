@@ -59,6 +59,39 @@ fn fmt_table(t: &Table, indent: &str) -> String {
     rows.join(", \\\n")
 }
 
+/// Machine-readable characterization summary (std-only, no deps).
+pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) -> String {
+    let arr = |v: &[f64]| {
+        v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",")
+    };
+    let table = |t: &Table| {
+        t.values
+            .iter()
+            .map(|row| format!("[{}]", arr(row)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut s = String::new();
+    s.push_str(&format!("{{\"library\":{library:?},"));
+    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str("\"arcs\":[");
+    for (i, a) in arcs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "{{\"cell\":{:?},\"in_pin\":{:?},\"out_pin\":{:?},\"sense\":{:?},",
+            a.cell, a.in_pin, a.out_pin, a.sense
+        ));
+        s.push_str(&format!("\"cell_rise\":[{}],", table(&a.cell_rise)));
+        s.push_str(&format!("\"cell_fall\":[{}],", table(&a.cell_fall)));
+        s.push_str(&format!("\"rise_transition\":[{}],", table(&a.rise_transition)));
+        s.push_str(&format!("\"fall_transition\":[{}]}}", table(&a.fall_transition)));
+    }
+    s.push_str("]}\n");
+    s
+}
+
 /// Render a complete single-library `.lib` for the given arcs.
 pub fn render(
     library: &str,

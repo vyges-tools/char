@@ -75,8 +75,10 @@ directly and only reach for `vyges-char` to fill those gaps.
 cargo build --release            # std-only, no external deps
 
 vyges-char run  cell.char -o cell.lib   # characterize (needs ngspice + models)
+vyges-char run  cell.char --json        # machine-readable summary instead of Liberty
 vyges-char check cell.char              # validate the job, print a summary
 vyges-char demo                         # print a sample .lib (no sim)
+# common flags: -o FILE · --json · -q/--quiet · -v/--verbose · -h/--help · -V/--version
 ```
 
 A job (`*.char`) is a few `key: value` lines:
