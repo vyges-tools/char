@@ -99,6 +99,32 @@ way to confirm a characterization is in tolerance.
 `vyges-char` is open and contains **no foundry-confidential data**. It runs out
 of the box on open PDKs (sky130, gf180) using their published device models.
 
+```text
+  vyges-char — OPEN engine  (Apache-2.0, contains no fab data)
+  ────────────────────────────────────────────────────────────────────
+    cell .subckt  ─►  job.rs ─► engine.rs ─(ngspice)─► liberty.rs  ─►  *.lib
+                         ▲
+                         └─ published plugin contract
+                            (device models · corner · slew×load grid)
+                                       │
+                 loads ONE characterization plugin
+                                       │
+        ┌──────────────────────────────┴──────────────────────────────┐
+        │                                                              │
+  OPEN reference plugin                          CERTIFIED per-fab plugins
+  (in-repo · no NDA)                             (private · one per fab/node 🔒)
+    • sky130A models + tt corner                   • vyges-char-tsmc28
+      ✓ M0/M3 validated                            • vyges-char-sec28
+                                                    • vyges-char-micron…
+   open data, ships with the tool                correlated corner +
+                                                  reference .lib — under NDA
+```
+
+**sky130A is the starter / reference plugin** — open, no NDA, and already proven
+by the M3 run (re-characterized `inv_1` against the shipped sky130 `.lib`). Today
+a "plugin" is just the models + corner setup you pass on the CLI; formal per-fab
+plugin packaging (discovery, signing, repo-per-fab) is the remaining open item.
+
 Getting *sign-off-grade* libraries on a **commercial** node takes two things
 beyond the tool running: the output must be **correlated to that foundry's
 silicon**, and the foundry must **accept the flow under an agreement**. Both live
