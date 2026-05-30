@@ -35,12 +35,14 @@ pub struct CharJob {
     pub base_dir: String,
 }
 
-/// sky130-class defaults so the common case needs no `power:`/`ground:` keys.
+/// Defaults covering common open-PDK naming so the usual case needs no
+/// `power:`/`ground:` keys: sky130 (`VPWR`/`VPB`, `VGND`/`VNB`) and gf180mcu
+/// (`VDD`/`VNW` n-well tie, `VSS`/`VPW` p-well tie).
 fn default_power() -> Vec<String> {
-    ["VPWR", "VPB", "VDD", "VCCD", "VCC"].iter().map(|s| s.to_string()).collect()
+    ["VPWR", "VPB", "VNW", "VDD", "VCCD", "VCC"].iter().map(|s| s.to_string()).collect()
 }
 fn default_ground() -> Vec<String> {
-    ["VGND", "VNB", "VSS", "VSSD", "GND"].iter().map(|s| s.to_string()).collect()
+    ["VGND", "VNB", "VPW", "VSS", "VSSD", "GND"].iter().map(|s| s.to_string()).collect()
 }
 
 fn names(s: &str) -> Vec<String> {

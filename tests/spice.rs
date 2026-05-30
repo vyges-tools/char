@@ -54,6 +54,15 @@ fn skips_blank_and_comment_lines_before_target() {
 }
 
 #[test]
+fn parses_gf180_subckt_pin_order() {
+    // gf180mcu inverter: input I, output ZN, well pins VNW/VPW (uppercase .SUBCKT)
+    let nl = "* gf180 cells\n\
+              .SUBCKT gf180mcu_fd_sc_mcu7t5v0__inv_1 I ZN VDD VNW VPW VSS\n.ENDS\n";
+    let pins = parse_subckt_pins(nl, "gf180mcu_fd_sc_mcu7t5v0__inv_1").unwrap();
+    assert_eq!(pins, vec!["I", "ZN", "VDD", "VNW", "VPW", "VSS"]);
+}
+
+#[test]
 fn folds_continuation_lines() {
     let nl = ".subckt big A B\n+ C D\n+ VGND VPWR\nM0 ...\n.ends\n";
     let pins = parse_subckt_pins(nl, "big").unwrap();
