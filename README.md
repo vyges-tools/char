@@ -3,6 +3,11 @@
 Standard-cell **timing characterization**: a cell's SPICE netlist in, a Liberty
 (`.lib`) timing model out.
 
+> **Vyges open EDA tools.** Commercial-grade silicon sign-off capability, built
+> on open standards and plain file formats — and meant to be accessible to
+> everyone, not only teams who can license a six-figure tool. `vyges-char`
+> opens up standard-cell characterization.
+
 ## Why this exists
 
 Timing sign-off needs a timing model for every standard cell — its delay and
@@ -10,6 +15,17 @@ output transition as a function of input slew and output load. Foundries ship
 these `.lib` files, but you need to (re)generate one whenever you have a new
 cell, a new PVT corner, a tweaked transistor, or simply want to **verify** a
 vendor library against first-principles SPICE. `vyges-char` produces that model.
+
+## How this is solved today
+
+In production, characterization means Cadence **Liberate**, Synopsys
+**SiliconSmart**, or Siemens **Solido** — CCS/ECSM, statistical LVF, full PVT
+matrices — the tools foundries and IP teams use to *produce* the libraries that
+ship in the PDK. Most design teams never run them; they consume the delivered
+`.lib`. In the open world the space is thin (**CharLib**, **LibreCell** over
+ngspice/Xyce), so users mostly reuse pre-characterized libraries and skip it.
+`vyges-char` makes the generate-and-verify path open and scriptable, behind the
+same Liberty file format everything downstream already speaks.
 
 ## The problem it solves
 
@@ -78,9 +94,15 @@ parameter, so:
 output table-by-table against the foundry reference `.lib` is the recommended
 way to confirm a characterization is in tolerance.
 
-## Scope
+## Current state (2026-05-30)
 
 v0 emits an **NLDM** (delay + transition lookup tables) from a single-stage
-transient deck. Receiver/driver waveform (CCS/ECSM) models, input pin
-capacitance, and multi-arc cells build on the same Liberty emitter and job
-format.
+transient deck, and has been **validated against a real PDK**: re-characterizing
+`sky130_fd_sc_hd__inv_1` over the foundry reference grid correlates to the
+shipped `.lib` to ~13% mean on `cell_rise` (~25% weighted across all four
+tables) — the expected gap for a v0 NLDM versus the foundry's CCS sign-off
+characterization, and the baseline we improve from.
+
+The road to sign-off grade builds on the same Liberty emitter and job format:
+receiver/driver waveform (CCS/ECSM) models, input pin capacitance, statistical
+LVF, and multi-arc cells. Same `run` command, no license.
