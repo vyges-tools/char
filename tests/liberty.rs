@@ -15,6 +15,8 @@ fn arc() -> Arc {
         cell_fall: mk(0.2),
         rise_transition: mk(0.3),
         fall_transition: mk(0.4),
+        sigma_rise: vyges_char::liberty::Table::new(0, 0),
+        sigma_fall: vyges_char::liberty::Table::new(0, 0),
     }
 }
 

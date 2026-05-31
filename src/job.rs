@@ -13,6 +13,7 @@
 //! vdd:         1.8
 //! temp:        25
 //! models:      /pdk/sky130A/.../sky130.lib.spice
+//! montecarlo:  100                        # LVF: MC samples for delay sigma (0/omit = NLDM only)
 //! ```
 
 use std::collections::BTreeMap;
@@ -33,6 +34,7 @@ pub struct CharJob {
     pub power: Vec<String>,  // subckt pins tied to VDD (e.g. VPWR, VPB)
     pub ground: Vec<String>, // subckt pins tied to VSS (e.g. VGND, VNB)
     pub osdi: Vec<String>,   // OSDI device-model files to pre_osdi-load (Verilog-A/OSDI PDKs)
+    pub montecarlo: usize,   // LVF: Monte-Carlo samples for delay sigma (0 = NLDM only)
     pub base_dir: String,
 }
 
@@ -111,6 +113,7 @@ impl CharJob {
             power: kv.get("power").map(|s| names(s)).unwrap_or_else(default_power),
             ground: kv.get("ground").map(|s| names(s)).unwrap_or_else(default_ground),
             osdi: kv.get("osdi").map(|s| names(s)).unwrap_or_default(),
+            montecarlo: kv.get("montecarlo").and_then(|s| s.parse().ok()).unwrap_or(0),
             base_dir: base_dir.to_string(),
         };
         job.validate()?;

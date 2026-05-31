@@ -83,6 +83,7 @@ fn run_point(
     slew: f64,
     load: f64,
     rising_input: bool,
+    mc: Option<u64>,
 ) -> Result<(f64, f64), CharError> {
     let includes: Vec<String> = std::iter::once(job.netlist.clone())
         .chain(job.models.iter().cloned())
@@ -98,6 +99,7 @@ fn run_point(
         slew,
         load,
         rising_input,
+        mc,
     );
     // Write the deck to a temp file and pass its path: `ngspice -b -` (deck on
     // stdin) is not portable across ngspice builds — some reject `-` as a
@@ -143,19 +145,44 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
         cell_fall: Table::new(ns, nl),
         rise_transition: Table::new(ns, nl),
         fall_transition: Table::new(ns, nl),
+        sigma_rise: Table::new(ns, nl),
+        sigma_fall: Table::new(ns, nl),
     };
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
-            // falling input -> rising output (cell_rise), and vice versa.
-            let (dr, tr) = run_point(job, &instance, slew, load, false)?;
+            // nominal point: falling input -> rising output (cell_rise), vice versa.
+            let (dr, tr) = run_point(job, &instance, slew, load, false, None)?;
             arc.cell_rise.values[i][j] = dr * 1e9;
             arc.rise_transition.values[i][j] = tr * 1e9;
-            let (df, tf) = run_point(job, &instance, slew, load, true)?;
+            let (df, tf) = run_point(job, &instance, slew, load, true, None)?;
             arc.cell_fall.values[i][j] = df * 1e9;
             arc.fall_transition.values[i][j] = tf * 1e9;
+
+            // LVF: Monte-Carlo over mismatch -> per-edge delay sigma (ns).
+            if job.montecarlo > 0 {
+                let mut rise = Vec::with_capacity(job.montecarlo);
+                let mut fall = Vec::with_capacity(job.montecarlo);
+                for k in 0..job.montecarlo as u64 {
+                    rise.push(run_point(job, &instance, slew, load, false, Some(k))?.0 * 1e9);
+                    fall.push(run_point(job, &instance, slew, load, true, Some(k))?.0 * 1e9);
+                }
+                arc.sigma_rise.values[i][j] = stddev(&rise);
+                arc.sigma_fall.values[i][j] = stddev(&fall);
+            }
         }
     }
     Ok(arc)
+}
+
+/// Sample standard deviation (n−1); 0.0 for fewer than two samples.
+pub fn stddev(xs: &[f64]) -> f64 {
+    let n = xs.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let mean = xs.iter().sum::<f64>() / n as f64;
+    let var = xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1) as f64;
+    var.sqrt()
 }
 
 /// Full run: characterize and render a `.lib`.

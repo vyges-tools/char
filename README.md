@@ -161,15 +161,21 @@ here the engine is open. Use `vyges-char` today on open PDKs and to
 characterize/verify custom cells on any PDK you have; certified sign-off
 libraries on a commercial node come with that node's plugin.
 
-## Current state (2026-05-30)
+## Current state (2026-05-31)
 
-v0 emits an **NLDM** (delay + transition lookup tables) from a single-stage
-transient deck, and has been **validated against a real PDK**: re-characterizing
+Emits an **NLDM** (delay + transition lookup tables) from a single-stage
+transient deck, **validated against a real PDK**: re-characterizing
 `sky130_fd_sc_hd__inv_1` over the foundry reference grid correlates to the
 shipped `.lib` to ~13% mean on `cell_rise` (~25% weighted across all four
-tables) — the expected gap for a v0 NLDM versus the foundry's CCS sign-off
-characterization, and the baseline we improve from.
+tables) — the expected gap for NLDM versus the foundry's CCS sign-off
+characterization.
 
-The road to sign-off grade builds on the same Liberty emitter and job format:
-receiver/driver waveform (CCS/ECSM) models, input pin capacitance, statistical
-LVF, and multi-arc cells. Same `run` command, no license.
+Adds **LVF (statistical OCV)**: with `montecarlo: N`, each (slew,load) point runs
+N seeded Monte-Carlo samples over device **mismatch** (`mc_mm_switch`) and emits
+`ocv_sigma_cell_rise/fall` delay-sigma tables alongside the NLDM — **exactly the
+tables `vyges-sta-si` consumes for POCV**, closing the loop `char → .lib → sta-si`.
+Zero-cost when `montecarlo` is unset (NLDM-only).
+
+The road to sign-off grade builds on the same emitter + job format: **CCS** driver
+current waveforms (`output_current`, the other half `sta-si` consumes), receiver
+pin capacitance, and multi-arc cells. Same `run` command, no license.

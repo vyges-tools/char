@@ -109,6 +109,8 @@ fn demo_arc() -> (Vec<f64>, Vec<f64>, Arc) {
         cell_fall: t(0.09),
         rise_transition: t(0.05),
         fall_transition: t(0.04),
+        sigma_rise: Table::new(0, 0),
+        sigma_fall: Table::new(0, 0),
     };
     (slews, loads, arc)
 }

@@ -15,9 +15,14 @@ impl Table {
     pub fn new(rows: usize, cols: usize) -> Table {
         Table { values: vec![vec![0.0; cols]; rows] }
     }
+    /// True if any entry is non-zero — gates whether a sigma table is emitted.
+    pub fn any_nonzero(&self) -> bool {
+        self.values.iter().any(|r| r.iter().any(|&v| v != 0.0))
+    }
 }
 
-/// One timing arc (in_pin -> out_pin) with its four NLDM tables.
+/// One timing arc (in_pin -> out_pin) with its four NLDM tables, plus optional
+/// LVF delay-sigma tables (from Monte-Carlo over mismatch). Empty sigma -> no LVF.
 #[derive(Debug, Clone)]
 pub struct Arc {
     pub cell: String,
@@ -28,6 +33,8 @@ pub struct Arc {
     pub cell_fall: Table,
     pub rise_transition: Table,
     pub fall_transition: Table,
+    pub sigma_rise: Table, // LVF: 1-sigma of cell_rise delay (ns)
+    pub sigma_fall: Table, // LVF: 1-sigma of cell_fall delay (ns)
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +143,20 @@ pub fn render(
             s.push_str("          values ( \\\n");
             s.push_str(&fmt_table(t, "        "));
             s.push_str(" );\n        }\n");
+        }
+        // LVF: per-(slew,load) delay sigma tables, emitted only when characterized.
+        if arc.sigma_rise.any_nonzero() || arc.sigma_fall.any_nonzero() {
+            for (name, t) in
+                [("ocv_sigma_cell_rise", &arc.sigma_rise), ("ocv_sigma_cell_fall", &arc.sigma_fall)]
+            {
+                s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+                s.push_str("          sigma_type : \"early_and_late\";\n");
+                s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+                s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+                s.push_str("          values ( \\\n");
+                s.push_str(&fmt_table(t, "        "));
+                s.push_str(" );\n        }\n");
+            }
         }
         s.push_str("      }\n    }\n  }\n");
     }

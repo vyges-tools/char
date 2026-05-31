@@ -4,9 +4,10 @@ use vyges_char::spice::{deck, parse_measures, parse_subckt_pins};
 fn deck_has_essentials() {
     let d = deck(
         "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV",
-        "A", "Y", 1.8, 0.04, 0.002, false,
+        "A", "Y", 1.8, 0.04, 0.002, false, None,
     );
     assert!(d.contains(".include \"inv.spice\""));
+    assert!(!d.contains("mc_mm_switch")); // no Monte-Carlo without a seed
     assert!(d.contains("VVDD VDD 0 1.8"));
     assert!(d.contains("X1 A Y VDD VSS INV"));
     assert!(d.contains("CL Y 0 0.002p"));
@@ -21,7 +22,7 @@ fn deck_has_essentials() {
 fn deck_emits_osdi_preload() {
     let d = deck(
         "t", &["inv.spice".into()], &["psp103.osdi".into(), "hicum.osdi".into()],
-        "X1 A Y VDD VSS INV", "A", "Y", 1.2, 0.04, 0.002, false,
+        "X1 A Y VDD VSS INV", "A", "Y", 1.2, 0.04, 0.002, false, None,
     );
     // control block with pre_osdi for each model, before the includes
     assert!(d.contains(".control\npre_osdi psp103.osdi\npre_osdi hicum.osdi\n.endc"));

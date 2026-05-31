@@ -21,6 +21,7 @@ pub fn deck(
     slew_ns: f64,
     load_pf: f64,
     rising_input: bool,
+    mc: Option<u64>,
 ) -> String {
     let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
     let half = vdd / 2.0;
@@ -28,16 +29,25 @@ pub fn deck(
     s.push_str(&format!("* {title}\n"));
     // OSDI device models (e.g. PSP103 / HICUM via OpenVAF) must be registered
     // before the netlist's `.model` cards are parsed — `pre_osdi` in a leading
-    // control block does that. Needed for PDKs whose devices are Verilog-A/OSDI
-    // (IHP sg13g2, mixed-signal/BCD nodes); empty for plain built-in models.
-    if !osdi.is_empty() {
+    // control block does that; the Monte-Carlo RNG seed is set in the same block
+    // (`set rndseed`) so each mismatch sample is independent. Needed for PDKs whose
+    // devices are Verilog-A/OSDI (IHP sg13g2, mixed-signal/BCD); empty otherwise.
+    if !osdi.is_empty() || mc.is_some() {
         s.push_str(".control\n");
         for o in osdi {
             // ngspice `pre_osdi` takes the rest of the line as the path literally —
             // quotes would become part of the filename, so emit it unquoted.
             s.push_str(&format!("pre_osdi {o}\n"));
         }
+        if let Some(seed) = mc {
+            s.push_str(&format!("set rndseed={seed}\n"));
+        }
         s.push_str(".endc\n");
+    }
+    // LVF Monte-Carlo: enable device mismatch (sky130/gf180 convention) so the
+    // model's agauss/mismatch terms vary per seeded run.
+    if mc.is_some() {
+        s.push_str(".param mc_mm_switch=1\n");
     }
     for inc in includes {
         s.push_str(&format!(".include \"{inc}\"\n"));
@@ -125,7 +135,7 @@ pub fn parse_measures(output: &str) -> HashMap<String, f64> {
                 continue;
             }
             // value is the first token after '='
-            if let Some(tok) = rhs.trim().split_whitespace().next() {
+            if let Some(tok) = rhs.split_whitespace().next() {
                 if let Ok(v) = tok.parse::<f64>() {
                     out.insert(name.to_string(), v);
                 }
