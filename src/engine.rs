@@ -436,6 +436,7 @@ fn seq_wiring(job: &CharJob) -> Result<String, CharError> {
     let is_signal = |pin: &str| {
         job.tie.iter().any(|(p, _)| p.eq_ignore_ascii_case(pin))
             || (!job.reset_pin.is_empty() && job.reset_pin.eq_ignore_ascii_case(pin))
+            || (!job.set_pin.is_empty() && job.set_pin.eq_ignore_ascii_case(pin))
     };
     let mut nodes = Vec::with_capacity(pins.len());
     for pin in &pins {
@@ -540,7 +541,12 @@ fn find_constraint(
     };
     let target = d0 * (1.0 + thresh);
     let (mut lo, mut hi) = (lo0, hi0);
-    for _ in 0..24 {
+    // Bisect to ~1 ps precision with early exit (capped): a ~5 ns range needs only
+    // ~13 halvings to reach 1 ps, vs a fixed 24 — roughly halving the ngspice runs.
+    for _ in 0..20 {
+        if hi - lo < TOL_NS {
+            break;
+        }
         let mid = 0.5 * (lo + hi);
         let pass = matches!(measure(mid)?, Some(d) if d <= target);
         if pass {
@@ -552,6 +558,9 @@ fn find_constraint(
     Ok(hi)
 }
 
+/// Bisection precision for constraint searches (1 ps).
+const TOL_NS: f64 = 0.001;
+
 /// Characterize a sequential cell: setup/hold constraints (bisection per grid point)
 /// and the CK->Q delay arc.
 fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
@@ -560,10 +569,12 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
     let (ns, nl) = (job.slews.len(), job.loads.len());
     let vdd = job.vdd;
     // Async controls held inactive during setup/hold/CK->Q: the user's tie list plus
-    // the reset pin at its inactive (de-asserted) level.
+    // the set/reset pins at their inactive (de-asserted) level (active-low -> high).
     let mut inactive_ties = job.tie.clone();
-    if !job.reset_pin.is_empty() && !inactive_ties.iter().any(|(p, _)| p == &job.reset_pin) {
-        inactive_ties.push((job.reset_pin.clone(), job.reset_active_low)); // active-low -> inactive high
+    for (p, al) in [(&job.reset_pin, job.reset_active_low), (&job.set_pin, job.set_active_low)] {
+        if !p.is_empty() && !inactive_ties.iter().any(|(q, _)| q == p) {
+            inactive_ties.push((p.clone(), al));
+        }
     }
     let ties = inactive_ties.as_slice();
     let mut cell = liberty::SeqCell {
@@ -580,10 +591,7 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         ckq_fall: Table::new(ns, nl),
         ckq_rise_trans: Table::new(ns, nl),
         ckq_fall_trans: Table::new(ns, nl),
-        clear: String::new(),
-        reset_pin: String::new(),
-        reset_q: Table::new(ns, nl),
-        reset_q_trans: Table::new(ns, nl),
+        asyncs: Vec::new(),
     };
 
     // CK->Q delay arc: sweep clock slew x Q load, data switched generously early.
@@ -649,62 +657,93 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         }
     }
 
-    // Async reset: emit the `ff` clear attribute + characterize the reset->Q delay
-    // arc (sweep reset transition x Q load). Other async pins stay tied inactive.
+    // Async set/reset: for each declared control, emit the `ff` preset/clear attribute
+    // and characterize its ->Q delay arc + recovery/removal constraints.
+    let mut controls: Vec<(String, bool, bool)> = Vec::new(); // (pin, active_low, sets_high)
     if !job.reset_pin.is_empty() {
-        cell.reset_pin = job.reset_pin.clone();
-        cell.clear = if job.reset_active_low {
-            format!("!{}", job.reset_pin)
-        } else {
-            job.reset_pin.clone()
+        controls.push((job.reset_pin.clone(), job.reset_active_low, false));
+    }
+    if !job.set_pin.is_empty() {
+        controls.push((job.set_pin.clone(), job.set_active_low, true));
+    }
+    for (pin, active_low, sets_high) in controls {
+        let expr = if active_low { format!("!{pin}") } else { pin.clone() };
+        let mut ctl = liberty::AsyncCtl {
+            pin: pin.clone(),
+            expr,
+            sets_high,
+            q: Table::new(ns, nl),
+            q_trans: Table::new(ns, nl),
+            recovery: Table::new(ns, ns),
+            removal: Table::new(ns, ns),
         };
-        // for the reset deck the reset pin is driven, so tie everything *except* it.
-        let other_ties: Vec<(String, bool)> =
-            job.tie.iter().filter(|(p, _)| p != &job.reset_pin).cloned().collect();
-        for (i, &rs) in job.slews.iter().enumerate() {
+        // the control under test is driven, so tie everything *except* it inactive.
+        let other: Vec<(String, bool)> =
+            inactive_ties.iter().filter(|(p, _)| p != &pin).cloned().collect();
+        // ->Q delay arc (sweep control transition x Q load).
+        for (i, &asl) in job.slews.iter().enumerate() {
             for (j, &load) in job.loads.iter().enumerate() {
-                let (rq, sl) =
-                    run_reset_q(job, &wiring, rs, load, rising, &other_ties)?;
-                cell.reset_q.values[i][j] = rq.unwrap_or(0.0) * 1e9;
-                cell.reset_q_trans.values[i][j] = sl.unwrap_or(0.0) * 1e9;
+                let (aq, sl) =
+                    run_async_q(job, &wiring, &pin, active_low, sets_high, asl, load, rising, &other)?;
+                ctl.q.values[i][j] = aq.unwrap_or(0.0) * 1e9;
+                ctl.q_trans.values[i][j] = sl.unwrap_or(0.0) * 1e9;
             }
         }
+        // NOTE: recovery/removal (the async de-assert-vs-clock constraints) are not
+        // characterized here yet — the single-edge "did Q capture" crossing is
+        // convergence-flaky on the async release edge, so the values pin to the
+        // search bound. They need a dedicated metastability-window measurement; the
+        // renderer already supports the tables (emitted only when nonzero), so this
+        // slots in later without a format change. sta-si skips recovery/removal.
+        cell.asyncs.push(ctl);
     }
     Ok(cell)
 }
 
-/// Run one async reset->Q deck; returns `(reset->Q delay, Q transition)` in seconds.
-fn run_reset_q(
+/// Run one async control->Q deck; returns `(control->Q delay, Q transition)` in seconds.
+#[allow(clippy::too_many_arguments)]
+fn run_async_q(
     job: &CharJob,
     wiring: &str,
-    reset_slew: f64,
+    async_pin: &str,
+    active_low: bool,
+    sets_high: bool,
+    async_slew: f64,
     q_load: f64,
     rising_clock: bool,
     ties: &[(String, bool)],
 ) -> Result<(Option<f64>, Option<f64>), CharError> {
     let includes: Vec<String> =
         std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
-    let d = spice::deck_reset_q(
-        &format!("rstq {} rs={reset_slew}", job.cell),
+    let d = spice::deck_async_q(
+        &format!("aq {} as={async_slew}", job.cell),
         &includes,
         &job.osdi,
         wiring,
         &job.clock_pin,
         &job.data_pin,
         &job.out_pin,
-        &job.reset_pin,
+        async_pin,
         job.vdd,
-        job.slews[0], // a fast clock for priming
-        reset_slew,
+        job.slews[0],
+        async_slew,
         q_load,
         rising_clock,
-        job.reset_active_low,
+        active_low,
+        sets_high,
         ties,
     );
+    let m = run_deck(&d, "aq")?;
+    let aq = m.0;
+    let sl = m.1;
+    Ok((aq, sl))
+}
+
+/// Write a deck, run ngspice, and pull `<key>` and `q_slew` from the measures.
+fn run_deck(deck: &str, key: &str) -> Result<(Option<f64>, Option<f64>), CharError> {
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
-    let deck_path =
-        std::env::temp_dir().join(format!("vyges_rstq_{}_{}.sp", std::process::id(), n));
-    std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
+    let deck_path = std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
+    std::fs::write(&deck_path, deck.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
     let out = Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
@@ -718,9 +757,9 @@ fn run_reset_q(
         String::from_utf8_lossy(&out.stderr)
     );
     let m = spice::parse_measures(&text);
-    let rq = m.get("rstq").copied().filter(|&v| v.is_finite() && v > 0.0);
-    let sl = m.get("q_slew").copied().filter(|&v| v.is_finite() && v > 0.0);
-    Ok((rq, sl))
+    let primary = m.get(key).copied().filter(|v| v.is_finite());
+    let slew = m.get("q_slew").copied().filter(|&v| v.is_finite() && v > 0.0);
+    Ok((primary, slew))
 }
 
 /// Render a characterized result to a `.lib` (or JSON) string for one corner's Units.

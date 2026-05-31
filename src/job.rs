@@ -121,6 +121,8 @@ pub struct CharJob {
     pub tie: Vec<(String, bool)>, // (pin, held-high?)
     pub reset_pin: String,
     pub reset_active_low: bool,
+    pub set_pin: String,
+    pub set_active_low: bool,
     pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
     pub base_dir: String,
 }
@@ -137,6 +139,17 @@ fn default_ground() -> Vec<String> {
 
 fn names(s: &str) -> Vec<String> {
     s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+}
+
+/// Whether an async pin is active-low: explicit `<active_key>: low|high` wins,
+/// else inferred from a `_B`/`_N` suffix on the pin name.
+fn active_low(kv: &BTreeMap<String, String>, pin_key: &str, active_key: &str) -> bool {
+    let pin = kv.get(pin_key).cloned().unwrap_or_default();
+    match kv.get(active_key).map(|s| s.as_str()) {
+        Some("low") | Some("0") => true,
+        Some("high") | Some("1") => false,
+        _ => pin.ends_with("_B") || pin.ends_with("_N"),
+    }
 }
 
 /// Parse a `pin=0|1, pin=0|1` held-level list (for `tie:`).
@@ -273,15 +286,9 @@ impl CharJob {
             clock_edge: kv.get("clock_edge").cloned().unwrap_or_else(|| "rising".into()),
             tie: kv.get("tie").map(|s| tie_levels(s)).transpose()?.unwrap_or_default(),
             reset_pin: kv.get("reset_pin").cloned().unwrap_or_default(),
-            reset_active_low: {
-                let rp = kv.get("reset_pin").cloned().unwrap_or_default();
-                match kv.get("reset_active").map(|s| s.as_str()) {
-                    Some("low") | Some("0") => true,
-                    Some("high") | Some("1") => false,
-                    // infer from the pin name: active-low if it ends in _B / _N.
-                    _ => rp.ends_with("_B") || rp.ends_with("_N"),
-                }
-            },
+            reset_active_low: active_low(&kv, "reset_pin", "reset_active"),
+            set_pin: kv.get("set_pin").cloned().unwrap_or_default(),
+            set_active_low: active_low(&kv, "set_pin", "set_active"),
             corners,
             base_dir: base_dir.to_string(),
         };

@@ -300,11 +300,13 @@ fn tie_sources(ties: &[(String, bool)], vdd: f64) -> String {
     s
 }
 
-/// Build an async reset->Q delay deck: prime the flop to Q=1 (one clock edge with
-/// data high), then assert the reset pin (its inactive->active edge over `reset_slew`,
-/// 50% at 6 ns) and measure reset->Q (Q falls). Other async pins are tied inactive.
+/// Build an async control->Q delay deck. Primes Q to the *opposite* of what the
+/// async control will force (so the assertion makes Q move), then asserts the async
+/// pin (inactive->active, 50% @ 6 ns) and measures control->Q. `sets_high` picks the
+/// direction: a **set/preset** drives Q high (prime Q=0, measure Q rise); a
+/// **reset/clear** drives Q low (prime Q=1, measure Q fall). Other async pins tied.
 #[allow(clippy::too_many_arguments)]
-pub fn deck_reset_q(
+pub fn deck_async_q(
     title: &str,
     includes: &[String],
     osdi: &[String],
@@ -312,18 +314,66 @@ pub fn deck_reset_q(
     clock_pin: &str,
     data_pin: &str,
     out_pin: &str,
-    reset_pin: &str,
+    async_pin: &str,
     vdd: f64,
     clk_slew: f64,
-    reset_slew: f64,
+    async_slew: f64,
     q_load: f64,
     rising_clock: bool,
-    reset_active_low: bool,
+    active_low: bool,
+    sets_high: bool,
     ties: &[(String, bool)],
 ) -> String {
     let half = vdd / 2.0;
     let mut s = String::new();
-    s.push_str(&format!("* {title} (async reset->Q delay)\n"));
+    s.push_str(&format!("* {title} (async control->Q delay)\n"));
+    deck_preamble(&mut s, osdi, includes, vdd);
+    // prime Q to the opposite rail so the assertion moves it: set primes Q=0, reset Q=1.
+    let prime = if sets_high { 0.0 } else { vdd };
+    let ck_pwl = if rising_clock {
+        pwl(0.0, clk_slew, &[(2.0, vdd), (4.0, 0.0)])
+    } else {
+        pwl(vdd, clk_slew, &[(2.0, 0.0), (4.0, vdd)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(prime, clk_slew, &[])));
+    let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
+    s.push_str(&format!(
+        "VASY asys 0 {}\nRASY asys {async_pin} 1\n",
+        pwl(inactive, async_slew, &[(6.0, active)])
+    ));
+    s.push_str(&tie_sources(ties, vdd));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    s.push_str(".tran 2p 8n\n");
+    // assertion edge direction; Q moves toward set/reset rail.
+    let a_dir = if active_low { "FALL=1" } else { "RISE=1" };
+    let q_dir = if sets_high { "RISE=1" } else { "FALL=1" };
+    s.push_str(&format!(
+        ".measure tran aq TRIG v({async_pin}) VAL={half} {a_dir} \
+         TARG v({out_pin}) VAL={half} {q_dir}\n"
+    ));
+    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
+    if sets_high {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
+             TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
+        ));
+    }
+    s.push_str(".end\n");
+    s
+}
+
+/// Common deck preamble: OSDI control block, includes, and series-R'd supplies.
+fn deck_preamble(s: &mut String, osdi: &[String], includes: &[String], vdd: f64) {
     if !osdi.is_empty() {
         s.push_str(".control\n");
         for o in osdi {
@@ -336,40 +386,6 @@ pub fn deck_reset_q(
     }
     s.push_str(&format!("VVDD vdd_s 0 {vdd}\nRVDD vdd_s VDD 0.01\n"));
     s.push_str("VVSS vss_s 0 0\nRVSS vss_s VSS 0.01\n");
-    // one prime clock edge (50% @ 2 ns) to latch Q=1 (data held high).
-    let ck_pwl = if rising_clock {
-        pwl(0.0, clk_slew, &[(2.0, vdd), (4.0, 0.0)])
-    } else {
-        pwl(vdd, clk_slew, &[(2.0, 0.0), (4.0, vdd)])
-    };
-    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
-    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(vdd, clk_slew, &[])));
-    // reset: held inactive, then asserted (50% @ 6 ns).
-    let (inactive, active) = if reset_active_low { (vdd, 0.0) } else { (0.0, vdd) };
-    s.push_str(&format!(
-        "VRST rsts 0 {}\nRRST rsts {reset_pin} 1\n",
-        pwl(inactive, reset_slew, &[(6.0, active)])
-    ));
-    s.push_str(&tie_sources(ties, vdd));
-    s.push_str(subckt_call);
-    if !subckt_call.ends_with('\n') {
-        s.push('\n');
-    }
-    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
-    s.push_str(".tran 2p 8n\n");
-    // reset assertion edge direction; Q always falls (reset clears).
-    let rst_dir = if reset_active_low { "FALL=1" } else { "RISE=1" };
-    s.push_str(&format!(
-        ".measure tran rstq TRIG v({reset_pin}) VAL={half} {rst_dir} \
-         TARG v({out_pin}) VAL={half} FALL=1\n"
-    ));
-    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
-    s.push_str(&format!(
-        ".measure tran q_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
-         TARG v({out_pin}) VAL={lo} FALL=1\n"
-    ));
-    s.push_str(".end\n");
-    s
 }
 
 /// Parse a `wrdata` 2-column dump (time, value) into samples.

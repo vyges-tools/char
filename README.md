@@ -179,8 +179,9 @@ vdd:        1.8
 ```
 
 The emitted `.lib` gains the `ff` `clear : "!RESET_B"` attribute and an async
-**reset->Q delay arc** (`timing_type : clear`). Extra unused inputs (e.g. scan
-controls on a scan flop) go in `tie:` as `SCE=0, SCD=1`.
+**reset->Q delay arc** (`timing_type : clear`). An async **set** uses `set_pin:`
+symmetrically — `ff preset` + a set->Q arc (`timing_type : preset`); a flop can
+carry both. Extra unused inputs (e.g. scan controls) go in `tie:` as `SCE=0, SCD=1`.
 
 ### Running against a real PDK (sky130 example)
 
@@ -312,13 +313,15 @@ worst setup at the slow (ss) corner — closing char → per-corner `.lib`s → 
 
 Adds **async set/reset flops**: a `tie:` list holds async/unused inputs at their
 inactive level (through a series R, same de-stiffening) so setup/hold/CK->Q
-characterize normally, and `reset_pin:` emits the `ff` `clear` attribute plus an
-async reset->Q delay arc. Validated on `sky130_fd_sc_hd__dfrtp_1`: clocked timing
-matches the plain dfxtp_1 (setup 0.041, negative hold, CK->Q 0.209 ns), the
-reset->Q delay is ~0.149 ns, and the flop `.lib` round-trips through `vyges-sta-si`
-(reg-to-reg setup+hold timed, the async `clear` arc correctly skipped, not mistaken
-for a data path).
+characterize normally, and `reset_pin:`/`set_pin:` emit the `ff` `clear`/`preset`
+attribute plus an async reset->Q (`clear`) / set->Q (`preset`) delay arc. Validated
+on `sky130_fd_sc_hd__dfrtp_1` (reset->Q ~0.149 ns) and `dfstp_1` (set->Q ~0.221 ns):
+clocked timing matches the plain dfxtp_1, and both flop `.lib`s round-trip through
+`vyges-sta-si` (reg-to-reg setup+hold timed, the async `clear`/`preset` arc correctly
+skipped, not mistaken for a data path). The setup/hold **push-out bisection** now
+early-exits at 1 ps precision (~halving the ngspice runs per point).
 
-The road to sign-off grade builds on the same emitter + job format: async-set
-(preset) cells, recovery/removal constraints, and faster bisection. Same `run`
-command, no license.
+The road to sign-off grade builds on the same emitter + job format: recovery/removal
+constraints (the async de-assert-vs-clock timing — the renderer already emits the
+tables; the characterization needs a dedicated metastability-window measurement) and
+multi-bit / latch cells. Same `run` command, no license.

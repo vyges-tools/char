@@ -67,10 +67,7 @@ fn render_seq_emits_ff_constraints_and_ckq() {
         ckq_fall: Table { values: vec![vec![0.24], vec![0.29]] },
         ckq_rise_trans: Table { values: vec![vec![0.06], vec![0.07]] },
         ckq_fall_trans: Table { values: vec![vec![0.05], vec![0.06]] },
-        clear: String::new(),
-        reset_pin: String::new(),
-        reset_q: Table::new(2, 1),
-        reset_q_trans: Table::new(2, 1),
+        asyncs: vec![],
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
     // ff group + clock pin
@@ -108,10 +105,7 @@ fn falling_edge_flop_inverts_clocked_on() {
         ckq_fall: Table { values: vec![vec![0.25], vec![0.30]] },
         ckq_rise_trans: tbl(0.06),
         ckq_fall_trans: tbl(0.06),
-        clear: String::new(),
-        reset_pin: String::new(),
-        reset_q: Table::new(2, 1),
-        reset_q_trans: Table::new(2, 1),
+        asyncs: vec![],
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
     assert!(lib.contains("clocked_on : \"!CLKN\""), "falling edge -> inverted clock");
