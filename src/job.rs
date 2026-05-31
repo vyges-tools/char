@@ -76,6 +76,13 @@ pub struct CharJob {
     pub montecarlo: usize,   // LVF: Monte-Carlo samples for delay sigma (0 = NLDM only)
     pub ccs: bool,           // CCS: capture output-current waveforms (default false)
     pub recv: bool,          // CCS: characterize receiver capacitance on in_pin (default false)
+    // Sequential (flip-flop) constraint characterization. When `seq` is set, the
+    // job characterizes setup/hold on `data_pin` vs `clock_pin` plus the CK->Q delay
+    // arc on `out_pin`, instead of combinational arcs.
+    pub seq: bool,
+    pub clock_pin: String,
+    pub data_pin: String,
+    pub clock_edge: String,  // "rising" | "falling"
     pub base_dir: String,
 }
 
@@ -144,9 +151,15 @@ impl CharJob {
         let num = |k: &str| -> Result<f64, JobError> {
             get(k)?.parse::<f64>().map_err(|_| JobError(format!("{k} is not a number")))
         };
+        let is_seq = kv.get("seq").map(|s| s == "true" || s == "1").unwrap_or(false)
+            || kv.contains_key("clock_pin");
         // Arcs: explicit `arc:` lines (multi-arc cells) win; otherwise synthesize a
         // single arc from in_pin/out_pin/sense (the back-compatible single-arc form).
-        let arcs: Vec<ArcSpec> = if arc_lines.is_empty() {
+        // Sequential jobs don't use combinational arcs (data_pin/clock_pin drive the
+        // setup/hold + CK->Q characterization instead), so the arc list stays empty.
+        let arcs: Vec<ArcSpec> = if is_seq {
+            Vec::new()
+        } else if arc_lines.is_empty() {
             vec![ArcSpec {
                 in_pin: get("in_pin")?,
                 out_pin: get("out_pin")?,
@@ -156,9 +169,10 @@ impl CharJob {
         } else {
             arc_lines.iter().map(|l| parse_arc_spec(l)).collect::<Result<_, _>>()?
         };
-        let first = &arcs[0];
-        let (in_pin, out_pin, sense) =
-            (first.in_pin.clone(), first.out_pin.clone(), first.sense.clone());
+        let (in_pin, out_pin, sense) = match arcs.first() {
+            Some(a) => (a.in_pin.clone(), a.out_pin.clone(), a.sense.clone()),
+            None => (kv.get("data_pin").cloned().unwrap_or_default(), get("out_pin")?, String::new()),
+        };
         let job = CharJob {
             cell: get("cell")?,
             netlist: get("netlist")?,
@@ -180,6 +194,11 @@ impl CharJob {
             montecarlo: kv.get("montecarlo").and_then(|s| s.parse().ok()).unwrap_or(0),
             ccs: kv.get("ccs").map(|s| s == "true" || s == "1").unwrap_or(false),
             recv: kv.get("recv").map(|s| s == "true" || s == "1").unwrap_or(false),
+            seq: kv.get("seq").map(|s| s == "true" || s == "1").unwrap_or(false)
+                || kv.contains_key("clock_pin"),
+            clock_pin: kv.get("clock_pin").cloned().unwrap_or_default(),
+            data_pin: kv.get("data_pin").cloned().unwrap_or_default(),
+            clock_edge: kv.get("clock_edge").cloned().unwrap_or_else(|| "rising".into()),
             base_dir: base_dir.to_string(),
         };
         job.validate()?;
@@ -193,7 +212,17 @@ impl CharJob {
     }
 
     pub fn validate(&self) -> Result<(), JobError> {
-        if self.cell.is_empty() || self.out_pin.is_empty() || self.in_pin.is_empty() {
+        if self.seq {
+            if self.cell.is_empty()
+                || self.clock_pin.is_empty()
+                || self.data_pin.is_empty()
+                || self.out_pin.is_empty()
+            {
+                return Err(JobError(
+                    "sequential job needs cell, clock_pin, data_pin and out_pin".into(),
+                ));
+            }
+        } else if self.cell.is_empty() || self.out_pin.is_empty() || self.in_pin.is_empty() {
             return Err(JobError("cell, in_pin and out_pin are required".into()));
         }
         if self.slews.is_empty() || self.loads.is_empty() {

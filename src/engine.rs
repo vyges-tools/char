@@ -145,13 +145,25 @@ fn run_point(
     Ok((delay, oslew))
 }
 
-/// Characterize every arc of the cell into NLDM tables (delays/transitions in ns).
-/// One `Arc` per `arc:` spec; the renderer groups them into a single cell.
-pub fn characterize(job: &CharJob) -> Result<Vec<Arc>, CharError> {
+/// The result of a characterization run: combinational arcs, or a sequential cell.
+pub enum Characterized {
+    Comb(Vec<Arc>),
+    Seq(Box<liberty::SeqCell>),
+}
+
+/// Characterize a cell. Combinational jobs yield one `Arc` per `arc:` spec (the
+/// renderer groups them into a single cell); sequential jobs yield a `SeqCell`
+/// with setup/hold constraints and the CK->Q arc.
+pub fn characterize(job: &CharJob) -> Result<Characterized, CharError> {
     if !ngspice_available() {
         return Err(CharError::NgspiceNotFound);
     }
-    job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect()
+    if job.seq {
+        Ok(Characterized::Seq(Box::new(characterize_seq(job)?)))
+    } else {
+        let arcs = job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect::<Result<_, _>>()?;
+        Ok(Characterized::Comb(arcs))
+    }
 }
 
 /// Characterize a single timing arc (in_pin -> out_pin, side inputs held).
@@ -411,8 +423,223 @@ pub fn stddev(xs: &[f64]) -> f64 {
     var.sqrt()
 }
 
+/// The deck fragment wiring a sequential cell: clock/data/out pins keep their net
+/// names, power/ground tie to VDD/VSS. Any other pin (e.g. async set/reset) is a
+/// hard error — v1 sequential characterization handles the plain D-flop.
+fn seq_wiring(job: &CharJob) -> Result<String, CharError> {
+    let netlist = std::fs::read_to_string(&job.netlist)
+        .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
+    let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
+        CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
+    })?;
+    let mut nodes = Vec::with_capacity(pins.len());
+    for pin in &pins {
+        let node = if pin.eq_ignore_ascii_case(&job.clock_pin) {
+            job.clock_pin.clone()
+        } else if pin.eq_ignore_ascii_case(&job.data_pin) {
+            job.data_pin.clone()
+        } else if pin.eq_ignore_ascii_case(&job.out_pin) {
+            job.out_pin.clone()
+        } else if job.power.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
+            "VDD".to_string()
+        } else if job.ground.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
+            "VSS".to_string()
+        } else {
+            return Err(CharError::Netlist(format!(
+                "subckt pin {pin:?} of {} is not clock/data/out or power/ground; v1 \
+                 sequential characterization handles the plain D-flop (no async set/reset)",
+                job.cell
+            )));
+        };
+        nodes.push(node);
+    }
+    Ok(format!("X1 {} {}", nodes.join(" "), job.cell))
+}
+
+/// Run one sequential deck and return `(CK->Q delay, Q transition)` in seconds, or
+/// `None` for either if the measure failed (a missing `ckq` means the capture failed).
+#[allow(clippy::too_many_arguments)]
+fn run_seq(
+    job: &CharJob,
+    wiring: &str,
+    clk_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    data_init: f64,
+    data_slew: f64,
+    edges: &[(f64, f64)],
+    q_rise: bool,
+) -> Result<(Option<f64>, Option<f64>), CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let d = spice::deck_seq(
+        &format!("seq {} clk={clk_slew}", job.cell),
+        &includes,
+        &job.osdi,
+        wiring,
+        &job.clock_pin,
+        &job.data_pin,
+        &job.out_pin,
+        job.vdd,
+        clk_slew,
+        q_load,
+        rising_clock,
+        data_init,
+        data_slew,
+        edges,
+        q_rise,
+    );
+    let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
+    let deck_path =
+        std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
+    std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
+    let out = Command::new("ngspice")
+        .arg("-b")
+        .arg(&deck_path)
+        .arg("--no-spiceinit")
+        .output()
+        .map_err(|e| CharError::Io(e.to_string()))?;
+    let _ = std::fs::remove_file(&deck_path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let m = spice::parse_measures(&text);
+    // a non-positive or absent ckq means the edge wasn't captured (failure).
+    let ckq = m.get("ckq").copied().filter(|&v| v.is_finite() && v > 0.0);
+    let slew = m.get("q_slew").copied().filter(|&v| v.is_finite() && v > 0.0);
+    Ok((ckq, slew))
+}
+
+/// Capture-clock 50% time (ns) — the prime edge is at 2 ns, capture at 8 ns.
+const T_CAPTURE: f64 = 8.0;
+
+/// Bisection (pushout) search for a setup or hold constraint (ns). `measure(sep)`
+/// returns the CK->Q delay for a data-to-clock separation `sep`; the constraint is
+/// the smallest `sep` at which the delay is still within `1+thresh` of the stable
+/// reference delay at `hi` (large separation = data far from the clock = easy).
+fn find_constraint(
+    measure: impl Fn(f64) -> Result<Option<f64>, CharError>,
+    lo0: f64,
+    hi0: f64,
+    thresh: f64,
+) -> Result<f64, CharError> {
+    let d0 = match measure(hi0)? {
+        Some(d) => d,
+        None => return Ok(f64::NAN), // even the easy point failed -> uncharacterizable
+    };
+    let target = d0 * (1.0 + thresh);
+    let (mut lo, mut hi) = (lo0, hi0);
+    for _ in 0..24 {
+        let mid = 0.5 * (lo + hi);
+        let pass = matches!(measure(mid)?, Some(d) if d <= target);
+        if pass {
+            hi = mid; // can we move closer to the clock and still pass?
+        } else {
+            lo = mid;
+        }
+    }
+    Ok(hi)
+}
+
+/// Characterize a sequential cell: setup/hold constraints (bisection per grid point)
+/// and the CK->Q delay arc.
+fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
+    let wiring = seq_wiring(job)?;
+    let rising = !job.clock_edge.eq_ignore_ascii_case("falling");
+    let (ns, nl) = (job.slews.len(), job.loads.len());
+    let vdd = job.vdd;
+    let mut cell = liberty::SeqCell {
+        cell: job.cell.clone(),
+        clock_pin: job.clock_pin.clone(),
+        data_pin: job.data_pin.clone(),
+        out_pin: job.out_pin.clone(),
+        rising_edge: rising,
+        setup_rise: Table::new(ns, ns),
+        setup_fall: Table::new(ns, ns),
+        hold_rise: Table::new(ns, ns),
+        hold_fall: Table::new(ns, ns),
+        ckq_rise: Table::new(ns, nl),
+        ckq_fall: Table::new(ns, nl),
+        ckq_rise_trans: Table::new(ns, nl),
+        ckq_fall_trans: Table::new(ns, nl),
+    };
+
+    // CK->Q delay arc: sweep clock slew x Q load, data switched generously early.
+    let fast_data = job.slews[0];
+    for (i, &cs) in job.slews.iter().enumerate() {
+        for (j, &load) in job.loads.iter().enumerate() {
+            // rising Q: data 0->1 latched at capture; falling Q: data 1->0.
+            let (ckr, sr) =
+                run_seq(job, &wiring, cs, load, rising, 0.0, fast_data, &[(T_CAPTURE - 1.5, vdd)], true)?;
+            let (ckf, sf) =
+                run_seq(job, &wiring, cs, load, rising, vdd, fast_data, &[(T_CAPTURE - 1.5, 0.0)], false)?;
+            cell.ckq_rise.values[i][j] = ckr.unwrap_or(0.0) * 1e9;
+            cell.ckq_fall.values[i][j] = ckf.unwrap_or(0.0) * 1e9;
+            cell.ckq_rise_trans.values[i][j] = sr.unwrap_or(0.0) * 1e9;
+            cell.ckq_fall_trans.values[i][j] = sf.unwrap_or(0.0) * 1e9;
+        }
+    }
+
+    // setup/hold: sweep clock slew (index_1) x data slew (index_2). Q load fixed.
+    let q_load = job.loads[0];
+    for (i, &cs) in job.slews.iter().enumerate() {
+        for (k, &ds) in job.slews.iter().enumerate() {
+            // setup, rising data (0->1, capture rising Q): data 50% at T-sep.
+            cell.setup_rise.values[i][k] = find_constraint(
+                |sep| Ok(run_seq(job, &wiring, cs, q_load, rising, 0.0, ds, &[(T_CAPTURE - sep, vdd)], true)?.0),
+                -ds,
+                3.0,
+                0.10,
+            )?;
+            // setup, falling data (1->0, capture falling Q).
+            cell.setup_fall.values[i][k] = find_constraint(
+                |sep| Ok(run_seq(job, &wiring, cs, q_load, rising, vdd, ds, &[(T_CAPTURE - sep, 0.0)], false)?.0),
+                -ds,
+                3.0,
+                0.10,
+            )?;
+            // hold, rising data: data 0->1 latched early, releases 1->0 at T+sep.
+            cell.hold_rise.values[i][k] = find_constraint(
+                |sep| {
+                    Ok(run_seq(
+                        job, &wiring, cs, q_load, rising, 0.0, ds,
+                        &[(T_CAPTURE - 2.0, vdd), (T_CAPTURE + sep, 0.0)], true,
+                    )?
+                    .0)
+                },
+                -1.8,
+                3.0,
+                0.10,
+            )?;
+            // hold, falling data: data 1->0 latched early, releases 0->1 at T+sep.
+            cell.hold_fall.values[i][k] = find_constraint(
+                |sep| {
+                    Ok(run_seq(
+                        job, &wiring, cs, q_load, rising, vdd, ds,
+                        &[(T_CAPTURE - 2.0, 0.0), (T_CAPTURE + sep, vdd)], false,
+                    )?
+                    .0)
+                },
+                -1.8,
+                3.0,
+                0.10,
+            )?;
+        }
+    }
+    Ok(cell)
+}
+
 /// Full run: characterize and render a `.lib`.
 pub fn run_to_lib(job: &CharJob) -> Result<String, CharError> {
-    let arcs = characterize(job)?;
-    Ok(liberty::render(&format!("{}_char", job.cell), &Units::default(), &job.slews, &job.loads, &arcs))
+    let lib = format!("{}_char", job.cell);
+    match characterize(job)? {
+        Characterized::Comb(arcs) => {
+            Ok(liberty::render(&lib, &Units::default(), &job.slews, &job.loads, &arcs))
+        }
+        Characterized::Seq(cell) => {
+            Ok(liberty::render_seq(&lib, &Units::default(), &job.slews, &job.loads, &cell))
+        }
+    }
 }

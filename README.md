@@ -120,6 +120,27 @@ output, a `timing ()` group per arc) — and the A->Y vs B->Y delays come out
 distinct (the series-stack input nearer the output switches faster), which is
 exactly why each arc must be characterized, not copied.
 
+**Sequential cells** (flip-flops) characterize the setup/hold constraints on the
+data pin and the CK->Q delay arc instead of combinational arcs:
+
+```text
+cell:       sky130_fd_sc_hd__dfxtp_1
+netlist:    sky130_fd_sc_hd.spice
+clock_pin:  CLK
+data_pin:   D
+out_pin:    Q
+clock_edge: rising                      # rising | falling
+slews:      0.05, 0.20                   # clock & data transition axes
+loads:      0.005                        # Q load (CK->Q arc)
+vdd:        1.8
+```
+
+Setup/hold are found per (clock slew, data slew) grid point by a **push-out
+bisection**: the data-to-clock separation is squeezed until the CK->Q delay
+degrades 10% past its stable value. The emitted `.lib` is a full sequential cell
+(`ff` group, `clock : true`, `setup_*`/`hold_*` constraint groups, edge-triggered
+CK->Q arc) — the exact shape `vyges-sta-si` reads for reg-to-reg timing.
+
 ### Running against a real PDK (sky130 example)
 
 The sky130 corner decks use relative `.include` paths and a Monte-Carlo switch
@@ -232,6 +253,14 @@ B->Y arcs emit, with the expected series-stack asymmetry (~25% at the first grid
 point), and the two-arc `.lib` round-trips through `vyges-sta-si` (worst path picks
 the slower arc).
 
-The road to sign-off grade builds on the same emitter + job format: sequential
-(setup/hold constraint) characterization and per-corner sweeps. Same `run` command,
-no license.
+Adds **sequential (flip-flop) characterization**: `clock_pin`/`data_pin` switch the
+job into setup/hold + CK->Q mode, with a push-out bisection (10% CK->Q degradation)
+per (clock slew, data slew) point and a small series resistor on every source to
+keep the flop's storage-node feedback converging in ngspice. Validated on
+`sky130_fd_sc_hd__dfxtp_1`: CK->Q ~0.2 ns, setup ~0.04-0.08 ns, and the
+characteristic **negative hold** — all physically sane — and the generated flop
+`.lib` round-trips through `vyges-sta-si`, which times a reg-to-reg path from it
+(setup WNS + hold WHS, the negative hold relaxing the hold check).
+
+The road to sign-off grade builds on the same emitter + job format: per-corner
+sweeps and async-pin (set/reset) sequential cells. Same `run` command, no license.

@@ -188,6 +188,104 @@ pub fn deck_recv(
     s
 }
 
+/// Build a PWL source body `PWL(0 v0 t .. )` from an initial level and a list of
+/// `(t50_ns, target_V)` edges, each ramping over `slew_ns` centred on `t50`.
+fn pwl(init: f64, slew: f64, edges: &[(f64, f64)]) -> String {
+    let mut s = format!("PWL(0 {init}");
+    let mut prev = init;
+    for &(t50, v) in edges {
+        let (t0, t1) = (t50 - slew / 2.0, t50 + slew / 2.0);
+        s.push_str(&format!(" {t0}n {prev} {t1}n {v}"));
+        prev = v;
+    }
+    s.push(')');
+    s
+}
+
+/// Build a sequential-constraint deck for a flip-flop. The clock gets a **prime**
+/// edge (50% at 2 ns) that latches the initial data, then a **capture** edge (50%
+/// at 8 ns); the data transitions per `data_edges` (50% times in ns) around the
+/// capture edge. Measures the CK->Q delay at the capture edge (`q_meas_rise` picks
+/// the Q direction) and the Q output transition. A failed capture leaves `ckq`
+/// unmeasured (the caller treats a missing measure as a capture failure).
+#[allow(clippy::too_many_arguments)]
+pub fn deck_seq(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    clock_pin: &str,
+    data_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    clk_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    data_init: f64,
+    data_slew: f64,
+    data_edges: &[(f64, f64)],
+    q_meas_rise: bool,
+) -> String {
+    let half = vdd / 2.0;
+    let cs = clk_slew;
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (sequential constraint)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    // Every ideal source drives the flop through a small series resistor. A bare
+    // voltage source onto a flip-flop's high-impedance storage/feedback nodes makes
+    // the source branch current stiff, and ngspice's transient collapses the
+    // timestep to ~0 at the data edge ("timestep too small; trouble with V…#branch").
+    // A ~1 Ω series R (negligible RC against the fF gate load) de-stiffens it.
+    s.push_str(&format!("VVDD vdd_s 0 {vdd}\nRVDD vdd_s VDD 0.01\n"));
+    s.push_str("VVSS vss_s 0 0\nRVSS vss_s VSS 0.01\n");
+    // Clock: prime edge (50% @ 2ns) then capture edge (50% @ 8ns). For a rising-edge
+    // flop both are rising (idle low); for a falling-edge flop both fall (idle high).
+    let ck_pwl = if rising_clock {
+        pwl(0.0, cs, &[(2.0, vdd), (4.0, 0.0), (8.0, vdd)])
+    } else {
+        pwl(vdd, cs, &[(2.0, 0.0), (4.0, vdd), (8.0, 0.0)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(data_init, data_slew, data_edges)));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    // capture at 8 ns; hold release can sit up to ~3 ns later -> run to 12 ns.
+    s.push_str(".tran 2p 12n\n");
+    // capture is the 2nd clock edge of its direction.
+    let ck_dir = if rising_clock { "RISE=2" } else { "FALL=2" };
+    let q_dir = if q_meas_rise { "RISE=1" } else { "FALL=1" };
+    s.push_str(&format!(
+        ".measure tran ckq TRIG v({clock_pin}) VAL={half} {ck_dir} \
+         TARG v({out_pin}) VAL={half} {q_dir}\n"
+    ));
+    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
+    if q_meas_rise {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
+             TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
+        ));
+    }
+    s.push_str(".end\n");
+    s
+}
+
 /// Parse a `wrdata` 2-column dump (time, value) into samples.
 pub fn parse_wrdata(text: &str) -> Vec<(f64, f64)> {
     text.lines()

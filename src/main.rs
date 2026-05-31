@@ -172,9 +172,18 @@ fn main() {
                 eprintln!("characterizing {} ({}x{} grid)", job.cell, job.slews.len(), job.loads.len());
             }
             match engine::characterize(&job) {
-                Ok(arcs) => {
+                Ok(engine::Characterized::Comb(arcs)) => {
                     let lib = format!("{}_char", job.cell);
                     write_out(&render(&lib, &job.slews, &job.loads, &arcs, &cli), &cli);
+                }
+                Ok(engine::Characterized::Seq(cell)) => {
+                    let lib = format!("{}_char", job.cell);
+                    let out = if cli.json {
+                        liberty::render_seq_json(&lib, &job.slews, &job.loads, &cell)
+                    } else {
+                        liberty::render_seq(&lib, &Units::default(), &job.slews, &job.loads, &cell)
+                    };
+                    write_out(&out, &cli);
                 }
                 Err(e) => {
                     eprintln!("error: {e}");

@@ -87,6 +87,26 @@ impl Arc {
     }
 }
 
+/// A characterized sequential (flip-flop) cell: setup/hold constraints on the data
+/// pin vs the clock, plus the CK->Q delay arc. Setup/hold tables are indexed by
+/// (clock transition, data transition); the CK->Q arc by (clock transition, load).
+#[derive(Debug, Clone)]
+pub struct SeqCell {
+    pub cell: String,
+    pub clock_pin: String,
+    pub data_pin: String,
+    pub out_pin: String,
+    pub rising_edge: bool, // clocked on the rising (true) or falling edge
+    pub setup_rise: Table, // setup for a rising data edge
+    pub setup_fall: Table,
+    pub hold_rise: Table,
+    pub hold_fall: Table,
+    pub ckq_rise: Table,       // CK->Q delay, rising Q
+    pub ckq_fall: Table,       // CK->Q delay, falling Q
+    pub ckq_rise_trans: Table, // Q rise transition
+    pub ckq_fall_trans: Table, // Q fall transition
+}
+
 #[derive(Debug, Clone)]
 pub struct Units {
     pub time: String,        // e.g. "1ns"
@@ -305,4 +325,119 @@ fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f6
         s.push_str("        }\n");
     }
     s.push_str("      }\n");
+}
+
+/// Render a single-library `.lib` for a characterized sequential cell: the `ff`
+/// group, the clock pin, the data pin's setup/hold constraint timing groups, and
+/// the Q pin's CK->Q delay arc. The constraint tables use a template over
+/// (related_pin / clock transition, constrained_pin / data transition); the CK->Q
+/// arc uses the usual (input_net_transition, total_output_net_capacitance) template.
+pub fn render_seq(
+    library: &str,
+    units: &Units,
+    slews: &[f64],
+    loads: &[f64],
+    cell: &SeqCell,
+) -> String {
+    let nldm = "vyges_nldm";
+    let cons = "vyges_constraint";
+    let mut s = String::new();
+    s.push_str(&format!("library ({library}) {{\n"));
+    s.push_str("  delay_model : table_lookup;\n");
+    s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
+    s.push_str(&format!(
+        "  capacitive_load_unit (1, \"{}\");\n",
+        units.cap.trim_end_matches(|c: char| c.is_alphabetic())
+    ));
+    s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
+    s.push_str("  nom_process : 1.0;\n  nom_temperature : 25.0;\n  nom_voltage : 1.8;\n\n");
+
+    // CK->Q delay template (slew x load) + constraint template (clk x data slew).
+    s.push_str(&format!("  lu_table_template ({nldm}) {{\n"));
+    s.push_str("    variable_1 : input_net_transition;\n");
+    s.push_str("    variable_2 : total_output_net_capacitance;\n");
+    s.push_str(&format!("    index_1 (\"{}\");\n", fmt_index(slews)));
+    s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(loads)));
+    s.push_str("  }\n\n");
+    s.push_str(&format!("  lu_table_template ({cons}) {{\n"));
+    s.push_str("    variable_1 : related_pin_transition;\n");
+    s.push_str("    variable_2 : constrained_pin_transition;\n");
+    s.push_str(&format!("    index_1 (\"{}\");\n", fmt_index(slews)));
+    s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(slews)));
+    s.push_str("  }\n\n");
+
+    let named = |s: &mut String, name: &str, tmpl: &str, i1: &[f64], i2: &[f64], t: &Table| {
+        s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+        s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(i1)));
+        s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(i2)));
+        s.push_str("          values ( \\\n");
+        s.push_str(&fmt_table(t, "        "));
+        s.push_str(" );\n        }\n");
+    };
+
+    s.push_str(&format!("  cell ({}) {{\n", cell.cell));
+    let clocked = if cell.rising_edge {
+        cell.clock_pin.clone()
+    } else {
+        format!("!{}", cell.clock_pin)
+    };
+    s.push_str("    ff (IQ, IQN) {\n");
+    s.push_str(&format!("      next_state : \"{}\";\n", cell.data_pin));
+    s.push_str(&format!("      clocked_on : \"{clocked}\";\n"));
+    s.push_str("    }\n");
+
+    // clock pin
+    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n      clock : true;\n    }}\n", cell.clock_pin));
+
+    // data pin: setup + hold constraint groups (rise/fall constraints)
+    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", cell.data_pin));
+    let edge = if cell.rising_edge { "rising" } else { "falling" };
+    for (ty, rise, fall) in [
+        (format!("setup_{edge}"), &cell.setup_rise, &cell.setup_fall),
+        (format!("hold_{edge}"), &cell.hold_rise, &cell.hold_fall),
+    ] {
+        s.push_str("      timing () {\n");
+        s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
+        s.push_str(&format!("        timing_type : {ty};\n"));
+        named(&mut s, "rise_constraint", cons, slews, slews, rise);
+        named(&mut s, "fall_constraint", cons, slews, slews, fall);
+        s.push_str("      }\n");
+    }
+    s.push_str("    }\n");
+
+    // Q pin: CK->Q delay arc (edge-triggered)
+    s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", cell.out_pin));
+    s.push_str("      timing () {\n");
+    s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
+    s.push_str(&format!("        timing_type : {edge}_edge;\n"));
+    named(&mut s, "cell_rise", nldm, slews, loads, &cell.ckq_rise);
+    named(&mut s, "cell_fall", nldm, slews, loads, &cell.ckq_fall);
+    named(&mut s, "rise_transition", nldm, slews, loads, &cell.ckq_rise_trans);
+    named(&mut s, "fall_transition", nldm, slews, loads, &cell.ckq_fall_trans);
+    s.push_str("      }\n    }\n");
+
+    s.push_str("  }\n}\n");
+    s
+}
+
+/// Machine-readable summary of a characterized sequential cell (std-only, no deps).
+pub fn render_seq_json(library: &str, slews: &[f64], loads: &[f64], cell: &SeqCell) -> String {
+    let arr = |v: &[f64]| v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",");
+    let table = |t: &Table| {
+        t.values.iter().map(|row| format!("[{}]", arr(row))).collect::<Vec<_>>().join(",")
+    };
+    let mut s = String::new();
+    s.push_str(&format!("{{\"library\":{library:?},\"cell\":{:?},", cell.cell));
+    s.push_str(&format!(
+        "\"clock_pin\":{:?},\"data_pin\":{:?},\"out_pin\":{:?},\"rising_edge\":{},",
+        cell.clock_pin, cell.data_pin, cell.out_pin, cell.rising_edge
+    ));
+    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str(&format!("\"setup_rise\":[{}],", table(&cell.setup_rise)));
+    s.push_str(&format!("\"setup_fall\":[{}],", table(&cell.setup_fall)));
+    s.push_str(&format!("\"hold_rise\":[{}],", table(&cell.hold_rise)));
+    s.push_str(&format!("\"hold_fall\":[{}],", table(&cell.hold_fall)));
+    s.push_str(&format!("\"ckq_rise\":[{}],", table(&cell.ckq_rise)));
+    s.push_str(&format!("\"ckq_fall\":[{}]}}\n", table(&cell.ckq_fall)));
+    s
 }
