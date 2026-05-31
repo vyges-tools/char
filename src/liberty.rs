@@ -187,40 +187,58 @@ pub fn render(
         s.push_str("  }\n\n");
     }
 
-    for arc in arcs {
-        s.push_str(&format!("  cell ({}) {{\n", arc.cell));
-        // Input pin: bare `direction : input` unless receiver caps were characterized,
-        // in which case emit the conventional `capacitance` + the CCS receiver model.
-        if arc.has_recv() {
-            s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", arc.in_pin));
-            s.push_str(&format!("      capacitance : {:.6};\n", arc.nominal_cap()));
-            s.push_str("      receiver_capacitance () {\n");
-            for (name, t) in [
-                ("receiver_capacitance1_rise", &arc.recv_c1_rise),
-                ("receiver_capacitance1_fall", &arc.recv_c1_fall),
-                ("receiver_capacitance2_rise", &arc.recv_c2_rise),
-                ("receiver_capacitance2_fall", &arc.recv_c2_fall),
-            ] {
-                s.push_str(&format!("        {name} ({tmpl}) {{\n"));
-                s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
-                s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
-                s.push_str("          values ( \\\n");
-                s.push_str(&fmt_table(t, "        "));
-                s.push_str(" );\n        }\n");
-            }
-            s.push_str("      }\n    }\n");
-        } else {
-            s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
+    // Group arcs into cells (first-seen order). Each cell emits every input pin
+    // once (with its receiver model) and every output pin once, the latter carrying
+    // a `timing ()` group per arc that targets it — so a multi-input gate (A->Y,
+    // B->Y) or a multi-output cell (A->{Y,Z}) renders as one well-formed cell.
+    let mut cell_order: Vec<&str> = Vec::new();
+    for a in arcs {
+        if !cell_order.iter().any(|c| *c == a.cell) {
+            cell_order.push(&a.cell);
         }
-        s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", arc.out_pin));
-        s.push_str("      timing () {\n");
-        s.push_str(&format!("        related_pin : \"{}\";\n", arc.in_pin));
-        s.push_str(&format!("        timing_sense : {};\n", arc.sense));
+    }
+    for cell in cell_order {
+        let cell_arcs: Vec<&Arc> = arcs.iter().filter(|a| a.cell == cell).collect();
+        s.push_str(&format!("  cell ({cell}) {{\n"));
+        // input pins, unique by name, first-seen
+        let mut seen_in: Vec<&str> = Vec::new();
+        for a in &cell_arcs {
+            if !seen_in.iter().any(|p| *p == a.in_pin) {
+                seen_in.push(&a.in_pin);
+                emit_input_pin(&mut s, a, tmpl, slews, loads);
+            }
+        }
+        // output pins, unique by name, first-seen; each gathers its timing arcs
+        let mut seen_out: Vec<&str> = Vec::new();
+        for a in &cell_arcs {
+            if seen_out.iter().any(|p| *p == a.out_pin) {
+                continue;
+            }
+            seen_out.push(&a.out_pin);
+            s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", a.out_pin));
+            for b in cell_arcs.iter().filter(|b| b.out_pin == a.out_pin) {
+                emit_timing(&mut s, b, tmpl, slews, loads);
+            }
+            s.push_str("    }\n");
+        }
+        s.push_str("  }\n");
+    }
+    s.push_str("}\n");
+    s
+}
+
+/// Emit one input `pin` group: bare `direction : input` unless receiver caps were
+/// characterized, in which case add the conventional `capacitance` + CCS receiver model.
+fn emit_input_pin(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f64]) {
+    if arc.has_recv() {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", arc.in_pin));
+        s.push_str(&format!("      capacitance : {:.6};\n", arc.nominal_cap()));
+        s.push_str("      receiver_capacitance () {\n");
         for (name, t) in [
-            ("cell_rise", &arc.cell_rise),
-            ("cell_fall", &arc.cell_fall),
-            ("rise_transition", &arc.rise_transition),
-            ("fall_transition", &arc.fall_transition),
+            ("receiver_capacitance1_rise", &arc.recv_c1_rise),
+            ("receiver_capacitance1_fall", &arc.recv_c1_fall),
+            ("receiver_capacitance2_rise", &arc.recv_c2_rise),
+            ("receiver_capacitance2_fall", &arc.recv_c2_fall),
         ] {
             s.push_str(&format!("        {name} ({tmpl}) {{\n"));
             s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
@@ -229,41 +247,62 @@ pub fn render(
             s.push_str(&fmt_table(t, "        "));
             s.push_str(" );\n        }\n");
         }
-        // LVF: per-(slew,load) delay sigma tables, emitted only when characterized.
-        if arc.sigma_rise.any_nonzero() || arc.sigma_fall.any_nonzero() {
-            for (name, t) in
-                [("ocv_sigma_cell_rise", &arc.sigma_rise), ("ocv_sigma_cell_fall", &arc.sigma_fall)]
-            {
-                s.push_str(&format!("        {name} ({tmpl}) {{\n"));
-                s.push_str("          sigma_type : \"early_and_late\";\n");
-                s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
-                s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
-                s.push_str("          values ( \\\n");
-                s.push_str(&fmt_table(t, "        "));
-                s.push_str(" );\n        }\n");
-            }
-        }
-        // CCS: output-current waveforms (one `vector` per (slew,load) grid point).
-        for (group, wfs) in
-            [("output_current_rise", &arc.ccs_rise), ("output_current_fall", &arc.ccs_fall)]
-        {
-            if wfs.is_empty() {
-                continue;
-            }
-            s.push_str(&format!("        {group} () {{\n"));
-            for w in wfs {
-                s.push_str("          vector (ccs_tmpl) {\n");
-                s.push_str(&format!("            reference_time : {:.6};\n", w.ref_time));
-                s.push_str(&format!("            index_1 (\"{:.6}\");\n", w.slew));
-                s.push_str(&format!("            index_2 (\"{:.6}\");\n", w.load));
-                s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
-                s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
-                s.push_str("          }\n");
-            }
-            s.push_str("        }\n");
-        }
-        s.push_str("      }\n    }\n  }\n");
+        s.push_str("      }\n    }\n");
+    } else {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
     }
-    s.push_str("}\n");
-    s
+}
+
+/// Emit one `timing ()` arc group (NLDM tables + optional LVF sigma + CCS current).
+fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f64]) {
+    s.push_str("      timing () {\n");
+    s.push_str(&format!("        related_pin : \"{}\";\n", arc.in_pin));
+    s.push_str(&format!("        timing_sense : {};\n", arc.sense));
+    for (name, t) in [
+        ("cell_rise", &arc.cell_rise),
+        ("cell_fall", &arc.cell_fall),
+        ("rise_transition", &arc.rise_transition),
+        ("fall_transition", &arc.fall_transition),
+    ] {
+        s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+        s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+        s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+        s.push_str("          values ( \\\n");
+        s.push_str(&fmt_table(t, "        "));
+        s.push_str(" );\n        }\n");
+    }
+    // LVF: per-(slew,load) delay sigma tables, emitted only when characterized.
+    if arc.sigma_rise.any_nonzero() || arc.sigma_fall.any_nonzero() {
+        for (name, t) in
+            [("ocv_sigma_cell_rise", &arc.sigma_rise), ("ocv_sigma_cell_fall", &arc.sigma_fall)]
+        {
+            s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+            s.push_str("          sigma_type : \"early_and_late\";\n");
+            s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+            s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str("          values ( \\\n");
+            s.push_str(&fmt_table(t, "        "));
+            s.push_str(" );\n        }\n");
+        }
+    }
+    // CCS: output-current waveforms (one `vector` per (slew,load) grid point).
+    for (group, wfs) in
+        [("output_current_rise", &arc.ccs_rise), ("output_current_fall", &arc.ccs_fall)]
+    {
+        if wfs.is_empty() {
+            continue;
+        }
+        s.push_str(&format!("        {group} () {{\n"));
+        for w in wfs {
+            s.push_str("          vector (ccs_tmpl) {\n");
+            s.push_str(&format!("            reference_time : {:.6};\n", w.ref_time));
+            s.push_str(&format!("            index_1 (\"{:.6}\");\n", w.slew));
+            s.push_str(&format!("            index_2 (\"{:.6}\");\n", w.load));
+            s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
+            s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
+            s.push_str("          }\n");
+        }
+        s.push_str("        }\n");
+    }
+    s.push_str("      }\n");
 }

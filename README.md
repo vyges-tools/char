@@ -100,6 +100,26 @@ ccs:     true                           # optional: emit CCS output-current wave
 recv:    true                           # optional: emit CCS receiver capacitance (input pin)
 ```
 
+**Multi-arc cells** (multi-input gates, multi-output cells) replace the single
+`in_pin`/`out_pin`/`sense` with one `arc:` line per timing arc — `<in> <out> <sense>
+[side=0|1 ...]`, where each *other* input is held at its non-controlling value while
+this arc is exercised. A 2-input NAND:
+
+```text
+cell:    sky130_fd_sc_hd__nand2_1
+netlist: sky130_fd_sc_hd.spice
+slews:   0.05, 0.20
+loads:   0.001, 0.005
+vdd:     1.8
+arc:     A Y negative_unate B=1         # A->Y, side input B held high
+arc:     B Y negative_unate A=1         # B->Y, side input A held high
+```
+
+All arcs of one cell render into a single `cell {}` (one `pin` per input, one per
+output, a `timing ()` group per arc) — and the A->Y vs B->Y delays come out
+distinct (the series-stack input nearer the output switches faster), which is
+exactly why each arc must be characterized, not copied.
+
 ### Running against a real PDK (sky130 example)
 
 The sky130 corner decks use relative `.include` paths and a Monte-Carlo switch
@@ -204,5 +224,14 @@ land ~1.8–2.6 fF (matching the foundry input-cap), with C2 inflating over C1 (
 consuming the receiver load shifts WNS by a sensible Miller delta. Zero-cost when
 `recv` is unset.
 
-The road to sign-off grade builds on the same emitter + job format: multi-arc /
-sequential cells and per-corner sweeps. Same `run` command, no license.
+Adds **multi-arc cells**: one `arc:` line per timing arc, each holding the other
+inputs at their non-controlling level via a fixed source, so multi-input gates
+(NAND/NOR/AND/OR/MUX) and multi-output cells characterize every arc and render into
+one well-formed `cell {}`. Validated on `sky130_fd_sc_hd__nand2_1`: both A->Y and
+B->Y arcs emit, with the expected series-stack asymmetry (~25% at the first grid
+point), and the two-arc `.lib` round-trips through `vyges-sta-si` (worst path picks
+the slower arc).
+
+The road to sign-off grade builds on the same emitter + job format: sequential
+(setup/hold constraint) characterization and per-corner sweeps. Same `run` command,
+no license.

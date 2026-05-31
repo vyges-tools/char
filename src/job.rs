@@ -19,6 +19,44 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// One timing arc to characterize: `in_pin -> out_pin` with a timing sense, and the
+/// fixed logic state of every *other* input pin (the non-controlling "side" inputs)
+/// while this arc is exercised. For a 2-input NAND `A -> Y`, B must be held at 1
+/// (its non-controlling value) so Y actually responds to A.
+#[derive(Debug, Clone)]
+pub struct ArcSpec {
+    pub in_pin: String,
+    pub out_pin: String,
+    pub sense: String,
+    pub side: Vec<(String, bool)>, // (side-input pin, held-high?)
+}
+
+/// Parse an `arc:` line: `<in> <out> <sense> [side=0|1 ...]`,
+/// e.g. `A Y negative_unate B=1`.
+fn parse_arc_spec(s: &str) -> Result<ArcSpec, JobError> {
+    let mut toks = s.split_whitespace();
+    let in_pin = toks
+        .next()
+        .ok_or_else(|| JobError("arc: needs '<in> <out> <sense> [side=0|1 ...]'".into()))?
+        .to_string();
+    let out_pin =
+        toks.next().ok_or_else(|| JobError(format!("arc {in_pin:?}: missing <out> pin")))?.to_string();
+    let sense = toks.next().unwrap_or("negative_unate").to_string();
+    let mut side = Vec::new();
+    for t in toks {
+        let (pin, lvl) = t
+            .split_once('=')
+            .ok_or_else(|| JobError(format!("arc side input must be pin=0|1, got {t:?}")))?;
+        let high = match lvl {
+            "1" | "high" | "H" | "h" => true,
+            "0" | "low" | "L" | "l" => false,
+            _ => return Err(JobError(format!("side level must be 0 or 1, got {t:?}"))),
+        };
+        side.push((pin.to_string(), high));
+    }
+    Ok(ArcSpec { in_pin, out_pin, sense, side })
+}
+
 #[derive(Debug, Clone)]
 pub struct CharJob {
     pub cell: String,
@@ -26,6 +64,7 @@ pub struct CharJob {
     pub in_pin: String,
     pub out_pin: String,
     pub sense: String, // negative_unate | positive_unate | non_unate
+    pub arcs: Vec<ArcSpec>, // one or more timing arcs (multi-input/multi-output cells)
     pub slews: Vec<f64>,
     pub loads: Vec<f64>,
     pub vdd: f64,
@@ -82,6 +121,8 @@ fn strip_comment(line: &str) -> &str {
 impl CharJob {
     pub fn parse(text: &str, base_dir: &str) -> Result<CharJob, JobError> {
         let mut kv: BTreeMap<String, String> = BTreeMap::new();
+        // `arc:` may repeat (multi-arc cells); collect them outside the dedup map.
+        let mut arc_lines: Vec<String> = Vec::new();
         for raw in text.lines() {
             let line = strip_comment(raw).trim();
             if line.is_empty() {
@@ -90,7 +131,12 @@ impl CharJob {
             let (k, v) = line
                 .split_once(':')
                 .ok_or_else(|| JobError(format!("expected 'key: value', got {line:?}")))?;
-            kv.insert(k.trim().to_lowercase(), v.trim().to_string());
+            let key = k.trim().to_lowercase();
+            if key == "arc" {
+                arc_lines.push(v.trim().to_string());
+            } else {
+                kv.insert(key, v.trim().to_string());
+            }
         }
         let get = |k: &str| -> Result<String, JobError> {
             kv.get(k).cloned().ok_or_else(|| JobError(format!("missing key: {k}")))
@@ -98,12 +144,28 @@ impl CharJob {
         let num = |k: &str| -> Result<f64, JobError> {
             get(k)?.parse::<f64>().map_err(|_| JobError(format!("{k} is not a number")))
         };
+        // Arcs: explicit `arc:` lines (multi-arc cells) win; otherwise synthesize a
+        // single arc from in_pin/out_pin/sense (the back-compatible single-arc form).
+        let arcs: Vec<ArcSpec> = if arc_lines.is_empty() {
+            vec![ArcSpec {
+                in_pin: get("in_pin")?,
+                out_pin: get("out_pin")?,
+                sense: kv.get("sense").cloned().unwrap_or_else(|| "negative_unate".into()),
+                side: Vec::new(),
+            }]
+        } else {
+            arc_lines.iter().map(|l| parse_arc_spec(l)).collect::<Result<_, _>>()?
+        };
+        let first = &arcs[0];
+        let (in_pin, out_pin, sense) =
+            (first.in_pin.clone(), first.out_pin.clone(), first.sense.clone());
         let job = CharJob {
             cell: get("cell")?,
             netlist: get("netlist")?,
-            in_pin: get("in_pin")?,
-            out_pin: get("out_pin")?,
-            sense: kv.get("sense").cloned().unwrap_or_else(|| "negative_unate".into()),
+            in_pin,
+            out_pin,
+            sense,
+            arcs,
             slews: floats(&get("slews")?)?,
             loads: floats(&get("loads")?)?,
             vdd: num("vdd")?,

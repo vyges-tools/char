@@ -42,44 +42,60 @@ fn ngspice_available() -> bool {
     Command::new("ngspice").arg("-v").output().is_ok()
 }
 
-/// The instance line wiring the cell under test, in the cell's real port order.
+/// The deck fragment wiring the cell under test for one timing arc, in the cell's
+/// real port order.
 ///
-/// Reads the `.subckt` port list from the netlist and maps each pin to a deck
-/// node: the input/output pins keep their net names (`in_pin`/`out_pin`, which
-/// the deck's source and load drive), power pins tie to `VDD`, ground pins tie
-/// to `VSS`. A port that is none of these is a hard error — the caller must
-/// declare it under `power:`/`ground:` rather than have it silently floated.
-fn subckt_call(job: &CharJob) -> Result<String, CharError> {
+/// Reads the `.subckt` port list from the netlist and maps each pin to a deck node:
+/// the arc's in/out pins keep their net names (which the deck's source and load
+/// drive); a **side input** (any other signal pin, declared on the `arc:` line) is
+/// pinned to its non-controlling level by a fixed source and tied to its own net;
+/// power pins tie to `VDD`, ground to `VSS`. A port that is none of these is a hard
+/// error — for a multi-input cell, every non-arc input must be declared as a side
+/// input (so its logic state is explicit), not silently floated.
+///
+/// Returns the side-input source lines followed by the `X1 …` instance line.
+fn arc_wiring(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<String, CharError> {
     let netlist = std::fs::read_to_string(&job.netlist)
         .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
     let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
         CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
     })?;
     let mut nodes = Vec::with_capacity(pins.len());
+    let mut sources = String::new();
     for pin in &pins {
-        let node = if pin.eq_ignore_ascii_case(&job.in_pin) {
-            job.in_pin.clone()
-        } else if pin.eq_ignore_ascii_case(&job.out_pin) {
-            job.out_pin.clone()
+        let node = if pin.eq_ignore_ascii_case(&spec.in_pin) {
+            spec.in_pin.clone()
+        } else if pin.eq_ignore_ascii_case(&spec.out_pin) {
+            spec.out_pin.clone()
+        } else if let Some((_, high)) =
+            spec.side.iter().find(|(p, _)| p.eq_ignore_ascii_case(pin))
+        {
+            // hold this side input at its declared (non-controlling) logic level.
+            let v = if *high { job.vdd } else { 0.0 };
+            sources.push_str(&format!("V{pin} {pin} 0 {v}\n"));
+            pin.clone()
         } else if job.power.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
             "VDD".to_string()
         } else if job.ground.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
             "VSS".to_string()
         } else {
             return Err(CharError::Netlist(format!(
-                "subckt pin {pin:?} of {} is neither in/out nor a known power/ground pin; \
-                 add it under power:/ground:",
+                "subckt pin {pin:?} of {} is not the arc's in/out pin, a declared side \
+                 input (add `{pin}=0|1` on the arc: line), or a power/ground pin",
                 job.cell
             )));
         };
         nodes.push(node);
     }
-    Ok(format!("X1 {} {}", nodes.join(" "), job.cell))
+    Ok(format!("{sources}X1 {} {}", nodes.join(" "), job.cell))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_point(
     job: &CharJob,
     subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
     slew: f64,
     load: f64,
     rising_input: bool,
@@ -93,8 +109,8 @@ fn run_point(
         &includes,
         &job.osdi,
         subckt_call,
-        &job.in_pin,
-        &job.out_pin,
+        in_pin,
+        out_pin,
         job.vdd,
         slew,
         load,
@@ -129,18 +145,25 @@ fn run_point(
     Ok((delay, oslew))
 }
 
-/// Characterize one arc into NLDM tables (delays/transitions in ns).
-pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
+/// Characterize every arc of the cell into NLDM tables (delays/transitions in ns).
+/// One `Arc` per `arc:` spec; the renderer groups them into a single cell.
+pub fn characterize(job: &CharJob) -> Result<Vec<Arc>, CharError> {
     if !ngspice_available() {
         return Err(CharError::NgspiceNotFound);
     }
-    let instance = subckt_call(job)?;
+    job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect()
+}
+
+/// Characterize a single timing arc (in_pin -> out_pin, side inputs held).
+fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, CharError> {
+    let instance = arc_wiring(job, spec)?;
+    let (in_pin, out_pin) = (spec.in_pin.as_str(), spec.out_pin.as_str());
     let (ns, nl) = (job.slews.len(), job.loads.len());
     let mut arc = Arc {
         cell: job.cell.clone(),
-        in_pin: job.in_pin.clone(),
-        out_pin: job.out_pin.clone(),
-        sense: job.sense.clone(),
+        in_pin: spec.in_pin.clone(),
+        out_pin: spec.out_pin.clone(),
+        sense: spec.sense.clone(),
         cell_rise: Table::new(ns, nl),
         cell_fall: Table::new(ns, nl),
         rise_transition: Table::new(ns, nl),
@@ -157,10 +180,10 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
             // nominal point: falling input -> rising output (cell_rise), vice versa.
-            let (dr, tr) = run_point(job, &instance, slew, load, false, None)?;
+            let (dr, tr) = run_point(job, &instance, in_pin, out_pin, slew, load, false, None)?;
             arc.cell_rise.values[i][j] = dr * 1e9;
             arc.rise_transition.values[i][j] = tr * 1e9;
-            let (df, tf) = run_point(job, &instance, slew, load, true, None)?;
+            let (df, tf) = run_point(job, &instance, in_pin, out_pin, slew, load, true, None)?;
             arc.cell_fall.values[i][j] = df * 1e9;
             arc.fall_transition.values[i][j] = tf * 1e9;
 
@@ -169,8 +192,14 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
                 let mut rise = Vec::with_capacity(job.montecarlo);
                 let mut fall = Vec::with_capacity(job.montecarlo);
                 for k in 0..job.montecarlo as u64 {
-                    rise.push(run_point(job, &instance, slew, load, false, Some(k))?.0 * 1e9);
-                    fall.push(run_point(job, &instance, slew, load, true, Some(k))?.0 * 1e9);
+                    rise.push(
+                        run_point(job, &instance, in_pin, out_pin, slew, load, false, Some(k))?.0
+                            * 1e9,
+                    );
+                    fall.push(
+                        run_point(job, &instance, in_pin, out_pin, slew, load, true, Some(k))?.0
+                            * 1e9,
+                    );
                 }
                 arc.sigma_rise.values[i][j] = stddev(&rise);
                 arc.sigma_fall.values[i][j] = stddev(&fall);
@@ -178,17 +207,17 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
 
             // CCS: capture the driver output-current waveform per edge.
             if job.ccs {
-                arc.ccs_rise.push(run_ccs_point(job, &instance, slew, load, false)?);
-                arc.ccs_fall.push(run_ccs_point(job, &instance, slew, load, true)?);
+                arc.ccs_rise.push(run_ccs_point(job, &instance, in_pin, out_pin, slew, load, false)?);
+                arc.ccs_fall.push(run_ccs_point(job, &instance, in_pin, out_pin, slew, load, true)?);
             }
 
             // CCS receiver capacitance: integrate the input-pin current into the
             // two segments (C1 before / C2 after the input 50% crossing).
             if job.recv {
-                let (c1r, c2r) = run_recv_point(job, &instance, slew, load, true)?;
+                let (c1r, c2r) = run_recv_point(job, &instance, in_pin, out_pin, slew, load, true)?;
                 arc.recv_c1_rise.values[i][j] = c1r;
                 arc.recv_c2_rise.values[i][j] = c2r;
-                let (c1f, c2f) = run_recv_point(job, &instance, slew, load, false)?;
+                let (c1f, c2f) = run_recv_point(job, &instance, in_pin, out_pin, slew, load, false)?;
                 arc.recv_c1_fall.values[i][j] = c1f;
                 arc.recv_c2_fall.values[i][j] = c2f;
             }
@@ -200,9 +229,12 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
 /// Capture one CCS output-current waveform via `deck_ccs` (wrdata to a temp file),
 /// sub-sampled to a compact set of points; current is stored as magnitude (the
 /// timing carrier) and `ref_time` is the input 50% crossing.
+#[allow(clippy::too_many_arguments)]
 fn run_ccs_point(
     job: &CharJob,
     subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
     slew: f64,
     load: f64,
     rising_input: bool,
@@ -218,8 +250,8 @@ fn run_ccs_point(
         &includes,
         &job.osdi,
         subckt_call,
-        &job.in_pin,
-        &job.out_pin,
+        in_pin,
+        out_pin,
         job.vdd,
         slew,
         load,
@@ -255,9 +287,12 @@ fn run_ccs_point(
 /// of the input ramp, and return `(C1, C2)` in pF. C1 = |Q| over [ramp start, input
 /// 50%] / (Vdd/2); C2 = over [input 50%, ramp end] / (Vdd/2). C2 carries the Miller
 /// inflation from the switching output, C1 is the static (pre-threshold) gate cap.
+#[allow(clippy::too_many_arguments)]
 fn run_recv_point(
     job: &CharJob,
     subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
     slew: f64,
     load: f64,
     rising_input: bool,
@@ -273,8 +308,8 @@ fn run_recv_point(
         &includes,
         &job.osdi,
         subckt_call,
-        &job.in_pin,
-        &job.out_pin,
+        in_pin,
+        out_pin,
         job.vdd,
         slew,
         load,
@@ -378,12 +413,6 @@ pub fn stddev(xs: &[f64]) -> f64 {
 
 /// Full run: characterize and render a `.lib`.
 pub fn run_to_lib(job: &CharJob) -> Result<String, CharError> {
-    let arc = characterize(job)?;
-    Ok(liberty::render(
-        &format!("{}_char", job.cell),
-        &Units::default(),
-        &job.slews,
-        &job.loads,
-        &[arc],
-    ))
+    let arcs = characterize(job)?;
+    Ok(liberty::render(&format!("{}_char", job.cell), &Units::default(), &job.slews, &job.loads, &arcs))
 }

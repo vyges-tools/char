@@ -79,11 +79,11 @@ fn write_out(text: &str, cli: &Cli) {
     }
 }
 
-fn render(library: &str, slews: &[f64], loads: &[f64], arc: &Arc, cli: &Cli) -> String {
+fn render(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc], cli: &Cli) -> String {
     if cli.json {
-        liberty::render_json(library, slews, loads, std::slice::from_ref(arc))
+        liberty::render_json(library, slews, loads, arcs)
     } else {
-        liberty::render(library, &Units::default(), slews, loads, std::slice::from_ref(arc))
+        liberty::render(library, &Units::default(), slews, loads, arcs)
     }
 }
 
@@ -138,7 +138,7 @@ fn main() {
     match cmd.as_str() {
         "demo" => {
             let (slews, loads, arc) = demo_arc();
-            write_out(&render("vyges_char_demo", &slews, &loads, &arc, &cli), &cli);
+            write_out(&render("vyges_char_demo", &slews, &loads, std::slice::from_ref(&arc), &cli), &cli);
         }
         "check" => {
             let Some(path) = cli.positionals.get(1) else {
@@ -172,9 +172,9 @@ fn main() {
                 eprintln!("characterizing {} ({}x{} grid)", job.cell, job.slews.len(), job.loads.len());
             }
             match engine::characterize(&job) {
-                Ok(arc) => {
+                Ok(arcs) => {
                     let lib = format!("{}_char", job.cell);
-                    write_out(&render(&lib, &job.slews, &job.loads, &arc, &cli), &cli);
+                    write_out(&render(&lib, &job.slews, &job.loads, &arcs, &cli), &cli);
                 }
                 Err(e) => {
                     eprintln!("error: {e}");
