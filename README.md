@@ -178,10 +178,12 @@ loads:      0.005
 vdd:        1.8
 ```
 
-The emitted `.lib` gains the `ff` `clear : "!RESET_B"` attribute and an async
-**reset->Q delay arc** (`timing_type : clear`). An async **set** uses `set_pin:`
-symmetrically — `ff preset` + a set->Q arc (`timing_type : preset`); a flop can
-carry both. Extra unused inputs (e.g. scan controls) go in `tie:` as `SCE=0, SCD=1`.
+The emitted `.lib` gains the `ff` `clear : "!RESET_B"` attribute, an async
+**reset->Q delay arc** (`timing_type : clear`), and the **recovery/removal**
+constraints (the async de-assert-vs-clock timing, found by bisecting the release
+edge for the capture/hold boundary). An async **set** uses `set_pin:` symmetrically
+— `ff preset` + set->Q arc + recovery/removal; a flop can carry both. Extra unused
+inputs (e.g. scan controls) go in `tie:` as `SCE=0, SCD=1`.
 
 ### Running against a real PDK (sky130 example)
 
@@ -315,13 +317,16 @@ Adds **async set/reset flops**: a `tie:` list holds async/unused inputs at their
 inactive level (through a series R, same de-stiffening) so setup/hold/CK->Q
 characterize normally, and `reset_pin:`/`set_pin:` emit the `ff` `clear`/`preset`
 attribute plus an async reset->Q (`clear`) / set->Q (`preset`) delay arc. Validated
-on `sky130_fd_sc_hd__dfrtp_1` (reset->Q ~0.149 ns) and `dfstp_1` (set->Q ~0.221 ns):
-clocked timing matches the plain dfxtp_1, and both flop `.lib`s round-trip through
-`vyges-sta-si` (reg-to-reg setup+hold timed, the async `clear`/`preset` arc correctly
-skipped, not mistaken for a data path). The setup/hold **push-out bisection** now
-early-exits at 1 ps precision (~halving the ngspice runs per point).
+on `sky130_fd_sc_hd__dfrtp_1` (reset->Q ~0.149 ns, recovery/removal -0.15/+0.15 ns)
+and `dfstp_1` (set->Q ~0.221 ns): clocked timing matches the plain dfxtp_1, and both
+flop `.lib`s round-trip through `vyges-sta-si` (reg-to-reg setup+hold timed, the
+async `clear`/`preset` and recovery/removal correctly skipped, not mistaken for data
+paths). **Recovery/removal** bisect the async release edge for the single
+capture/hold boundary `t*` relative to the clock (recovery = clock - t*, removal =
+t* - clock, both signed — a flop that samples just after the clock 50% tolerates a
+late release, giving a small negative recovery). The setup/hold **push-out
+bisection** early-exits at 1 ps precision (~halving the ngspice runs per point).
 
-The road to sign-off grade builds on the same emitter + job format: recovery/removal
-constraints (the async de-assert-vs-clock timing — the renderer already emits the
-tables; the characterization needs a dedicated metastability-window measurement) and
-multi-bit / latch cells. Same `run` command, no license.
+The road to sign-off grade builds on the same emitter + job format: multi-bit /
+latch cells and a two-sided (distinct recovery vs removal) metastability window.
+Same `run` command, no license.

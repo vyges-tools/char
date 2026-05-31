@@ -72,6 +72,7 @@ fn ctl(pin: &str, expr: &str, sets_high: bool) -> AsyncCtl {
         pin: pin.into(),
         expr: expr.into(),
         sets_high,
+        active_low: true,
         q: Table { values: vec![vec![0.15]] },
         q_trans: Table { values: vec![vec![0.05]] },
         recovery: Table { values: vec![vec![0.08]] },
@@ -109,6 +110,9 @@ fn render_emits_clear_arc_recovery_removal() {
     assert!(lib.contains("timing_type : removal_rising;"));
     // reset -> Q clears: the ->Q arc is a cell_fall
     assert!(lib.contains("cell_fall (vyges_nldm)"));
+    // the emitted Liberty must be brace-balanced (recovery/removal groups closed)
+    let (open, close) = (lib.matches('{').count(), lib.matches('}').count());
+    assert_eq!(open, close, "unbalanced braces in emitted .lib");
 }
 
 #[test]

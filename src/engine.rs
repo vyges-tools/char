@@ -561,6 +561,38 @@ fn find_constraint(
 /// Bisection precision for constraint searches (1 ps).
 const TOL_NS: f64 = 0.001;
 
+/// Find the async-release time (ns) at which the settled Q crosses mid-rail — the
+/// boundary between "the clock captured the data" and "the async value held". The
+/// `[lo0, hi0]` range must **bracket** the boundary (one end captures, the other
+/// holds); returns `None` if it doesn't (so the caller can leave the constraint
+/// uncharacterized rather than pin to a bound).
+fn find_release_boundary(
+    measure: impl Fn(f64) -> Result<Option<f64>, CharError>,
+    lo0: f64,
+    hi0: f64,
+    half: f64,
+) -> Result<Option<f64>, CharError> {
+    let captured = |q: Option<f64>| matches!(q, Some(v) if v > half);
+    let lo_cap = captured(measure(lo0)?);
+    let hi_cap = captured(measure(hi0)?);
+    if lo_cap == hi_cap {
+        return Ok(None); // boundary not bracketed
+    }
+    let (mut lo, mut hi) = (lo0, hi0);
+    for _ in 0..20 {
+        if hi - lo < TOL_NS {
+            break;
+        }
+        let mid = 0.5 * (lo + hi);
+        if captured(measure(mid)?) == lo_cap {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(Some(0.5 * (lo + hi)))
+}
+
 /// Characterize a sequential cell: setup/hold constraints (bisection per grid point)
 /// and the CK->Q delay arc.
 fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
@@ -672,6 +704,7 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
             pin: pin.clone(),
             expr,
             sets_high,
+            active_low,
             q: Table::new(ns, nl),
             q_trans: Table::new(ns, nl),
             recovery: Table::new(ns, ns),
@@ -689,12 +722,32 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
                 ctl.q_trans.values[i][j] = sl.unwrap_or(0.0) * 1e9;
             }
         }
-        // NOTE: recovery/removal (the async de-assert-vs-clock constraints) are not
-        // characterized here yet — the single-edge "did Q capture" crossing is
-        // convergence-flaky on the async release edge, so the values pin to the
-        // search bound. They need a dedicated metastability-window measurement; the
-        // renderer already supports the tables (emitted only when nonzero), so this
-        // slots in later without a format change. sta-si skips recovery/removal.
+        // recovery/removal: find the single async-release boundary (relative to the
+        // clock) where Q flips between "captured the data" and "held the async value",
+        // per (clock slew, async slew). recovery = lead margin (clock - boundary),
+        // removal = lag margin (boundary - clock); both signed (a flop that samples
+        // slightly after the clock 50% tolerates a late release -> negative recovery).
+        let half = job.vdd / 2.0;
+        let q_load = job.loads[0];
+        for (i, &cs) in job.slews.iter().enumerate() {
+            for (k, &asl) in job.slews.iter().enumerate() {
+                let t_star = find_release_boundary(
+                    |rel| {
+                        run_async_constraint(
+                            job, &wiring, &pin, active_low, sets_high, cs, asl, q_load, rising, rel,
+                            &other,
+                        )
+                    },
+                    T_CAPTURE - 2.0,
+                    T_CAPTURE + 2.0,
+                    half,
+                )?;
+                if let Some(t) = t_star {
+                    ctl.recovery.values[i][k] = T_CAPTURE - t;
+                    ctl.removal.values[i][k] = t - T_CAPTURE;
+                }
+            }
+        }
         cell.asyncs.push(ctl);
     }
     Ok(cell)
@@ -737,6 +790,45 @@ fn run_async_q(
     let aq = m.0;
     let sl = m.1;
     Ok((aq, sl))
+}
+
+/// Run one async recovery/removal deck; returns the settled Q level (V), or None.
+#[allow(clippy::too_many_arguments)]
+fn run_async_constraint(
+    job: &CharJob,
+    wiring: &str,
+    async_pin: &str,
+    active_low: bool,
+    sets_high: bool,
+    clk_slew: f64,
+    async_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    release_50: f64,
+    ties: &[(String, bool)],
+) -> Result<Option<f64>, CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let d = spice::deck_async_constraint(
+        &format!("rr {} rel={release_50}", job.cell),
+        &includes,
+        &job.osdi,
+        wiring,
+        &job.clock_pin,
+        &job.data_pin,
+        &job.out_pin,
+        async_pin,
+        job.vdd,
+        clk_slew,
+        async_slew,
+        q_load,
+        rising_clock,
+        active_low,
+        sets_high,
+        release_50,
+        ties,
+    );
+    Ok(run_deck(&d, "qfinal")?.0)
 }
 
 /// Write a deck, run ngspice, and pull `<key>` and `q_slew` from the measures.

@@ -372,6 +372,64 @@ pub fn deck_async_q(
     s
 }
 
+/// Build an async recovery/removal deck. The async control is **asserted from the
+/// start** (forcing Q to its set/reset value), then **released** (active->inactive)
+/// at `release_50` ns; the data is held at the value a clean capture would latch
+/// (the opposite of the async-forced value), and a single clock edge fires at 8 ns.
+/// The settled Q (`qfinal` at 10.5 ns) tells whether the clock captured the data
+/// (release far enough before the internal sampling instant) or the async value
+/// held — the engine bisects `release_50` for that boundary. Sources go through the
+/// same series Rs as `deck_seq` so the release edge converges.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_async_constraint(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    clock_pin: &str,
+    data_pin: &str,
+    out_pin: &str,
+    async_pin: &str,
+    vdd: f64,
+    clk_slew: f64,
+    async_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    active_low: bool,
+    sets_high: bool,
+    release_50: f64,
+    ties: &[(String, bool)],
+) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (async recovery/removal)\n"));
+    deck_preamble(&mut s, osdi, includes, vdd);
+    let ck_pwl = if rising_clock {
+        pwl(0.0, clk_slew, &[(8.0, vdd)])
+    } else {
+        pwl(vdd, clk_slew, &[(8.0, 0.0)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    // capture value = opposite of the async-forced value, so a capture is visible.
+    let cap = if sets_high { 0.0 } else { vdd };
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(cap, clk_slew, &[])));
+    // async asserted from t=0, released (active->inactive) at release_50.
+    let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
+    s.push_str(&format!(
+        "VASY asys 0 {}\nRASY asys {async_pin} 1\n",
+        pwl(active, async_slew, &[(release_50, inactive)])
+    ));
+    s.push_str(&tie_sources(ties, vdd));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    s.push_str(".tran 2p 11n\n");
+    s.push_str(&format!(".measure tran qfinal FIND v({out_pin}) AT=10.5n\n"));
+    s.push_str(".end\n");
+    s
+}
+
 /// Common deck preamble: OSDI control block, includes, and series-R'd supplies.
 fn deck_preamble(s: &mut String, osdi: &[String], includes: &[String], vdd: f64) {
     if !osdi.is_empty() {

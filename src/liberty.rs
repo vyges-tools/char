@@ -117,6 +117,7 @@ pub struct AsyncCtl {
     pub pin: String,
     pub expr: String,
     pub sets_high: bool,
+    pub active_low: bool, // de-assert edge is rising (active-low) or falling
     pub q: Table,
     pub q_trans: Table,
     pub recovery: Table,
@@ -429,8 +430,10 @@ pub fn render_seq(
             s.push_str("      timing () {\n");
             s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
             s.push_str(&format!("        timing_type : {kind}_{edge};\n"));
-            let cname = if a.sets_high { "fall_constraint" } else { "rise_constraint" };
+            // constrain the async pin's de-assert edge: rising for active-low controls.
+            let cname = if a.active_low { "rise_constraint" } else { "fall_constraint" };
             named(&mut s, cname, cons, slews, slews, t);
+            s.push_str("      }\n"); // close the recovery/removal timing() group
         }
         s.push_str("    }\n");
     }
