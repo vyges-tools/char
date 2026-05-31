@@ -169,21 +169,31 @@ fn main() {
                 }
             };
             if cli.verbose {
-                eprintln!("characterizing {} ({}x{} grid)", job.cell, job.slews.len(), job.loads.len());
+                let n = job.corners.len().max(1);
+                eprintln!(
+                    "characterizing {} ({}x{} grid, {} corner{})",
+                    job.cell, job.slews.len(), job.loads.len(), n, if n == 1 { "" } else { "s" }
+                );
             }
-            match engine::characterize(&job) {
-                Ok(engine::Characterized::Comb(arcs)) => {
-                    let lib = format!("{}_char", job.cell);
-                    write_out(&render(&lib, &job.slews, &job.loads, &arcs, &cli), &cli);
-                }
-                Ok(engine::Characterized::Seq(cell)) => {
-                    let lib = format!("{}_char", job.cell);
-                    let out = if cli.json {
-                        liberty::render_seq_json(&lib, &job.slews, &job.loads, &cell)
+            match engine::run_corners(&job, cli.json) {
+                Ok(libs) => {
+                    if job.corners.is_empty() {
+                        // single default corner: keep the stdout / -o FILE behaviour.
+                        write_out(&libs[0].1, &cli);
                     } else {
-                        liberty::render_seq(&lib, &Units::default(), &job.slews, &job.loads, &cell)
-                    };
-                    write_out(&out, &cli);
+                        // per-corner sweep: write <cell>__<corner>.{lib,json} into the
+                        // -o directory (default cwd), one file per corner.
+                        let dir = cli.out.as_deref().unwrap_or(".");
+                        let ext = if cli.json { "json" } else { "lib" };
+                        for (name, text) in &libs {
+                            let path = format!("{dir}/{}__{name}.{ext}", job.cell);
+                            if let Err(e) = std::fs::write(&path, text) {
+                                eprintln!("error: writing {path}: {e}");
+                                exit(1);
+                            }
+                            eprintln!("wrote {path}");
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("error: {e}");

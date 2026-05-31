@@ -57,6 +57,37 @@ fn parse_arc_spec(s: &str) -> Result<ArcSpec, JobError> {
     Ok(ArcSpec { in_pin, out_pin, sense, side })
 }
 
+/// A PVT corner to characterize: a named (process models, supply, temperature)
+/// operating point. A job with `corner:` lines is swept across all of them, one
+/// `.lib` per corner — the per-corner library set sta-si's MCMM consumes.
+#[derive(Debug, Clone)]
+pub struct Corner {
+    pub name: String,
+    pub models: Vec<String>,
+    pub vdd: f64,
+    pub temp: f64,
+}
+
+/// Parse a `corner:` line: `name | models(csv) | vdd [| temp]`,
+/// e.g. `ss_n40C_1v60 | params_ss.spice, corners/ss.spice | 1.60 | -40`.
+fn parse_corner(s: &str, default_temp: f64) -> Result<Corner, JobError> {
+    let parts: Vec<&str> = s.split('|').map(|p| p.trim()).collect();
+    if parts.len() < 3 {
+        return Err(JobError(format!(
+            "corner needs 'name | models | vdd [| temp]', got {s:?}"
+        )));
+    }
+    let models: Vec<String> =
+        parts[1].split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
+    let vdd =
+        parts[2].parse::<f64>().map_err(|_| JobError(format!("corner vdd not a number: {:?}", parts[2])))?;
+    let temp = match parts.get(3) {
+        Some(t) => t.parse::<f64>().map_err(|_| JobError(format!("corner temp not a number: {t:?}")))?,
+        None => default_temp,
+    };
+    Ok(Corner { name: parts[0].to_string(), models, vdd, temp })
+}
+
 #[derive(Debug, Clone)]
 pub struct CharJob {
     pub cell: String,
@@ -83,6 +114,7 @@ pub struct CharJob {
     pub clock_pin: String,
     pub data_pin: String,
     pub clock_edge: String,  // "rising" | "falling"
+    pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
     pub base_dir: String,
 }
 
@@ -128,8 +160,9 @@ fn strip_comment(line: &str) -> &str {
 impl CharJob {
     pub fn parse(text: &str, base_dir: &str) -> Result<CharJob, JobError> {
         let mut kv: BTreeMap<String, String> = BTreeMap::new();
-        // `arc:` may repeat (multi-arc cells); collect them outside the dedup map.
+        // `arc:`/`corner:` may repeat; collect them outside the dedup map.
         let mut arc_lines: Vec<String> = Vec::new();
+        let mut corner_lines: Vec<String> = Vec::new();
         for raw in text.lines() {
             let line = strip_comment(raw).trim();
             if line.is_empty() {
@@ -139,10 +172,12 @@ impl CharJob {
                 .split_once(':')
                 .ok_or_else(|| JobError(format!("expected 'key: value', got {line:?}")))?;
             let key = k.trim().to_lowercase();
-            if key == "arc" {
-                arc_lines.push(v.trim().to_string());
-            } else {
-                kv.insert(key, v.trim().to_string());
+            match key.as_str() {
+                "arc" => arc_lines.push(v.trim().to_string()),
+                "corner" => corner_lines.push(v.trim().to_string()),
+                _ => {
+                    kv.insert(key, v.trim().to_string());
+                }
             }
         }
         let get = |k: &str| -> Result<String, JobError> {
@@ -173,6 +208,20 @@ impl CharJob {
             Some(a) => (a.in_pin.clone(), a.out_pin.clone(), a.sense.clone()),
             None => (kv.get("data_pin").cloned().unwrap_or_default(), get("out_pin")?, String::new()),
         };
+        let default_temp = kv.get("temp").and_then(|t| t.parse().ok()).unwrap_or(25.0);
+        let corners: Vec<Corner> =
+            corner_lines.iter().map(|l| parse_corner(l, default_temp)).collect::<Result<_, _>>()?;
+        // Top-level models/vdd default the single-run case; with corners present they
+        // fall back to the first corner so the struct is always well-formed.
+        let models: Vec<String> = kv
+            .get("models")
+            .map(|m| m.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .or_else(|| corners.first().map(|c| c.models.clone()))
+            .unwrap_or_default();
+        let vdd = match kv.get("vdd") {
+            Some(_) => num("vdd")?,
+            None => corners.first().map(|c| c.vdd).ok_or_else(|| JobError("missing key: vdd".into()))?,
+        };
         let job = CharJob {
             cell: get("cell")?,
             netlist: get("netlist")?,
@@ -182,12 +231,9 @@ impl CharJob {
             arcs,
             slews: floats(&get("slews")?)?,
             loads: floats(&get("loads")?)?,
-            vdd: num("vdd")?,
-            temp: kv.get("temp").and_then(|t| t.parse().ok()).unwrap_or(25.0),
-            models: kv
-                .get("models")
-                .map(|m| m.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-                .unwrap_or_default(),
+            vdd,
+            temp: default_temp,
+            models,
             power: kv.get("power").map(|s| names(s)).unwrap_or_else(default_power),
             ground: kv.get("ground").map(|s| names(s)).unwrap_or_else(default_ground),
             osdi: kv.get("osdi").map(|s| names(s)).unwrap_or_default(),
@@ -199,6 +245,7 @@ impl CharJob {
             clock_pin: kv.get("clock_pin").cloned().unwrap_or_default(),
             data_pin: kv.get("data_pin").cloned().unwrap_or_default(),
             clock_edge: kv.get("clock_edge").cloned().unwrap_or_else(|| "rising".into()),
+            corners,
             base_dir: base_dir.to_string(),
         };
         job.validate()?;

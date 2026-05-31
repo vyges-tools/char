@@ -112,11 +112,19 @@ pub struct Units {
     pub time: String,        // e.g. "1ns"
     pub cap: String,         // e.g. "1pf"
     pub voltage: String,     // e.g. "1V"
+    pub nom_voltage: f64,    // nominal supply for this corner (lib header)
+    pub nom_temp: f64,       // nominal temperature for this corner (lib header)
 }
 
 impl Default for Units {
     fn default() -> Self {
-        Units { time: "1ns".into(), cap: "1pf".into(), voltage: "1V".into() }
+        Units {
+            time: "1ns".into(),
+            cap: "1pf".into(),
+            voltage: "1V".into(),
+            nom_voltage: 1.8,
+            nom_temp: 25.0,
+        }
     }
 }
 
@@ -188,7 +196,7 @@ pub fn render(
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
     s.push_str(&format!("  capacitive_load_unit (1, \"{}\");\n", units.cap.trim_end_matches(|c: char| c.is_alphabetic())));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
-    s.push_str("  nom_process : 1.0;\n  nom_temperature : 25.0;\n  nom_voltage : 1.8;\n\n");
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n\n", units.nom_temp, units.nom_voltage));
 
     // Lookup-table template shared by all arcs.
     s.push_str(&format!("  lu_table_template ({tmpl}) {{\n"));
@@ -350,7 +358,7 @@ pub fn render_seq(
         units.cap.trim_end_matches(|c: char| c.is_alphabetic())
     ));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
-    s.push_str("  nom_process : 1.0;\n  nom_temperature : 25.0;\n  nom_voltage : 1.8;\n\n");
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n\n", units.nom_temp, units.nom_voltage));
 
     // CK->Q delay template (slew x load) + constraint template (clk x data slew).
     s.push_str(&format!("  lu_table_template ({nldm}) {{\n"));

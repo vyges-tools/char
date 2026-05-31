@@ -631,15 +631,68 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
     Ok(cell)
 }
 
-/// Full run: characterize and render a `.lib`.
-pub fn run_to_lib(job: &CharJob) -> Result<String, CharError> {
-    let lib = format!("{}_char", job.cell);
-    match characterize(job)? {
+/// Render a characterized result to a `.lib` (or JSON) string for one corner's Units.
+fn render_result(
+    job: &CharJob,
+    libname: &str,
+    units: &Units,
+    result: &Characterized,
+    json: bool,
+) -> String {
+    match result {
         Characterized::Comb(arcs) => {
-            Ok(liberty::render(&lib, &Units::default(), &job.slews, &job.loads, &arcs))
+            if json {
+                liberty::render_json(libname, &job.slews, &job.loads, arcs)
+            } else {
+                liberty::render(libname, units, &job.slews, &job.loads, arcs)
+            }
         }
         Characterized::Seq(cell) => {
-            Ok(liberty::render_seq(&lib, &Units::default(), &job.slews, &job.loads, &cell))
+            if json {
+                liberty::render_seq_json(libname, &job.slews, &job.loads, cell)
+            } else {
+                liberty::render_seq(libname, units, &job.slews, &job.loads, cell)
+            }
         }
     }
+}
+
+/// Full run: characterize and render a `.lib` (single default corner).
+pub fn run_to_lib(job: &CharJob) -> Result<String, CharError> {
+    let lib = format!("{}_char", job.cell);
+    Ok(render_result(job, &lib, &Units::default(), &characterize(job)?, false))
+}
+
+/// Characterize across every declared corner (or once with the top-level
+/// models/vdd/temp if none), returning `(corner_name, rendered_lib)` per corner.
+/// The corner name is empty for the single default-corner case.
+pub fn run_corners(job: &CharJob, json: bool) -> Result<Vec<(String, String)>, CharError> {
+    let corners = if job.corners.is_empty() {
+        vec![crate::job::Corner {
+            name: String::new(),
+            models: job.models.clone(),
+            vdd: job.vdd,
+            temp: job.temp,
+        }]
+    } else {
+        job.corners.clone()
+    };
+    let mut out = Vec::with_capacity(corners.len());
+    for c in &corners {
+        // a per-corner view of the job overrides the process models, supply and temp.
+        let mut jc = job.clone();
+        jc.models = c.models.clone();
+        jc.vdd = c.vdd;
+        jc.temp = c.temp;
+        jc.corners = Vec::new(); // avoid recursion if anyone re-enters
+        let units = Units { nom_voltage: c.vdd, nom_temp: c.temp, ..Units::default() };
+        let libname = if c.name.is_empty() {
+            format!("{}_char", job.cell)
+        } else {
+            format!("{}__{}", job.cell, c.name)
+        };
+        let result = characterize(&jc)?;
+        out.push((c.name.clone(), render_result(&jc, &libname, &units, &result, json)));
+    }
+    Ok(out)
 }

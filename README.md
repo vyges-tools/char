@@ -141,6 +141,27 @@ degrades 10% past its stable value. The emitted `.lib` is a full sequential cell
 (`ff` group, `clock : true`, `setup_*`/`hold_*` constraint groups, edge-triggered
 CK->Q arc) — the exact shape `vyges-sta-si` reads for reg-to-reg timing.
 
+**Per-corner sweeps** characterize the cell across PVT corners — one `corner:` line
+per (process models, supply, temperature) — emitting one `.lib` per corner, the
+per-corner library set `vyges-sta-si`'s MCMM consumes:
+
+```text
+cell:    sky130_fd_sc_hd__inv_1
+netlist: sky130_fd_sc_hd.spice
+in_pin:  A
+out_pin: Y
+slews:   0.05, 0.20
+loads:   0.001, 0.005
+# corner:  name | models (csv) | vdd [| temp]
+corner:  ss_n40C_1v60 | params_ss.spice, corners/ss.spice | 1.60 | -40
+corner:  tt_025C_1v80 | params_tt.spice, corners/tt.spice | 1.80 | 25
+corner:  ff_125C_1v95 | params_ff.spice, corners/ff.spice | 1.95 | 125
+```
+
+`vyges-char run job.char -o <dir>` then writes `<cell>__<corner>.lib` per corner
+(nominal voltage/temperature in each header). Without `corner:` lines the job is a
+single run to stdout / `-o FILE` as before — fully back-compatible.
+
 ### Running against a real PDK (sky130 example)
 
 The sky130 corner decks use relative `.include` paths and a Monte-Carlo switch
@@ -262,5 +283,12 @@ characteristic **negative hold** — all physically sane — and the generated f
 `.lib` round-trips through `vyges-sta-si`, which times a reg-to-reg path from it
 (setup WNS + hold WHS, the negative hold relaxing the hold check).
 
-The road to sign-off grade builds on the same emitter + job format: per-corner
-sweeps and async-pin (set/reset) sequential cells. Same `run` command, no license.
+Adds **per-corner sweeps**: `corner:` lines characterize the cell across PVT
+corners (process models + supply + temperature), one `.lib` per corner with the
+corner's nominal V/T in the header. Validated on `sky130_fd_sc_hd__inv_1` across
+ss/tt/ff: the cell_rise delays order ff (0.019 ns) < tt (0.029) < ss (0.053) as
+physics demands, and `vyges-sta-si` MCMM across the three generated libs binds the
+worst setup at the slow (ss) corner — closing char → per-corner `.lib`s → MCMM.
+
+The road to sign-off grade builds on the same emitter + job format: async-pin
+(set/reset) sequential cells and faster bisection. Same `run` command, no license.
