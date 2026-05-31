@@ -105,6 +105,13 @@ pub struct SeqCell {
     pub ckq_fall: Table,       // CK->Q delay, falling Q
     pub ckq_rise_trans: Table, // Q rise transition
     pub ckq_fall_trans: Table, // Q fall transition
+    // Async set/reset. `clear` is the `ff` clear expression (e.g. "!RESET_B"); when
+    // present, `reset_pin` is the async control and `reset_q`/`reset_q_trans` hold the
+    // async reset->Q delay arc (indexed by reset transition × load). Empty -> no async.
+    pub clear: String,
+    pub reset_pin: String,
+    pub reset_q: Table,
+    pub reset_q_trans: Table,
 }
 
 #[derive(Debug, Clone)]
@@ -392,10 +399,18 @@ pub fn render_seq(
     s.push_str("    ff (IQ, IQN) {\n");
     s.push_str(&format!("      next_state : \"{}\";\n", cell.data_pin));
     s.push_str(&format!("      clocked_on : \"{clocked}\";\n"));
+    if !cell.clear.is_empty() {
+        s.push_str(&format!("      clear : \"{}\";\n", cell.clear));
+    }
     s.push_str("    }\n");
 
     // clock pin
     s.push_str(&format!("    pin ({}) {{\n      direction : input;\n      clock : true;\n    }}\n", cell.clock_pin));
+
+    // async reset pin (if any)
+    if !cell.reset_pin.is_empty() {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", cell.reset_pin));
+    }
 
     // data pin: setup + hold constraint groups (rise/fall constraints)
     s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", cell.data_pin));
@@ -422,7 +437,18 @@ pub fn render_seq(
     named(&mut s, "cell_fall", nldm, slews, loads, &cell.ckq_fall);
     named(&mut s, "rise_transition", nldm, slews, loads, &cell.ckq_rise_trans);
     named(&mut s, "fall_transition", nldm, slews, loads, &cell.ckq_fall_trans);
-    s.push_str("      }\n    }\n");
+    s.push_str("      }\n");
+    // async reset -> Q delay arc (timing_type clear): reset only drives Q low.
+    if !cell.reset_pin.is_empty() && cell.reset_q.any_nonzero() {
+        s.push_str("      timing () {\n");
+        s.push_str(&format!("        related_pin : \"{}\";\n", cell.reset_pin));
+        s.push_str("        timing_type : clear;\n");
+        s.push_str("        timing_sense : positive_unate;\n");
+        named(&mut s, "cell_fall", nldm, slews, loads, &cell.reset_q);
+        named(&mut s, "fall_transition", nldm, slews, loads, &cell.reset_q_trans);
+        s.push_str("      }\n");
+    }
+    s.push_str("    }\n");
 
     s.push_str("  }\n}\n");
     s

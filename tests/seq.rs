@@ -33,7 +33,7 @@ fn deck_seq_has_prime_and_capture_clock() {
     // rising-edge flop, capture rising Q; one data edge (setup)
     let d = deck_seq(
         "t", &["dff.spice".into()], &[], "X1 CLK D VGND VNB VPB VPWR Q DFF",
-        "CLK", "D", "Q", 1.8, 0.05, 0.005, true, 0.0, 0.05, &[(6.5, 1.8)], true,
+        "CLK", "D", "Q", 1.8, 0.05, 0.005, true, 0.0, 0.05, &[(6.5, 1.8)], true, &[],
     );
     // sources drive through small series Rs (de-stiffen the flop's storage nodes)
     assert!(d.contains("RCK cks CLK 1"), "clock through series R");
@@ -67,6 +67,10 @@ fn render_seq_emits_ff_constraints_and_ckq() {
         ckq_fall: Table { values: vec![vec![0.24], vec![0.29]] },
         ckq_rise_trans: Table { values: vec![vec![0.06], vec![0.07]] },
         ckq_fall_trans: Table { values: vec![vec![0.05], vec![0.06]] },
+        clear: String::new(),
+        reset_pin: String::new(),
+        reset_q: Table::new(2, 1),
+        reset_q_trans: Table::new(2, 1),
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
     // ff group + clock pin
@@ -104,6 +108,10 @@ fn falling_edge_flop_inverts_clocked_on() {
         ckq_fall: Table { values: vec![vec![0.25], vec![0.30]] },
         ckq_rise_trans: tbl(0.06),
         ckq_fall_trans: tbl(0.06),
+        clear: String::new(),
+        reset_pin: String::new(),
+        reset_q: Table::new(2, 1),
+        reset_q_trans: Table::new(2, 1),
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
     assert!(lib.contains("clocked_on : \"!CLKN\""), "falling edge -> inverted clock");

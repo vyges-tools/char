@@ -162,6 +162,26 @@ corner:  ff_125C_1v95 | params_ff.spice, corners/ff.spice | 1.95 | 125
 (nominal voltage/temperature in each header). Without `corner:` lines the job is a
 single run to stdout / `-o FILE` as before — fully back-compatible.
 
+**Async set/reset flops** add a `tie:` list (pins held at their inactive level
+during setup/hold/CK->Q) and an optional `reset_pin:`; the reset's active level is
+inferred from the name (`_B`/`_N` → active-low) or set with `reset_active:`:
+
+```text
+cell:       sky130_fd_sc_hd__dfrtp_1
+netlist:    sky130_fd_sc_hd.spice
+clock_pin:  CLK
+data_pin:   D
+out_pin:    Q
+reset_pin:  RESET_B          # async reset; held inactive (high) for setup/hold/CK->Q
+slews:      0.10
+loads:      0.005
+vdd:        1.8
+```
+
+The emitted `.lib` gains the `ff` `clear : "!RESET_B"` attribute and an async
+**reset->Q delay arc** (`timing_type : clear`). Extra unused inputs (e.g. scan
+controls on a scan flop) go in `tie:` as `SCE=0, SCD=1`.
+
 ### Running against a real PDK (sky130 example)
 
 The sky130 corner decks use relative `.include` paths and a Monte-Carlo switch
@@ -290,5 +310,15 @@ ss/tt/ff: the cell_rise delays order ff (0.019 ns) < tt (0.029) < ss (0.053) as
 physics demands, and `vyges-sta-si` MCMM across the three generated libs binds the
 worst setup at the slow (ss) corner — closing char → per-corner `.lib`s → MCMM.
 
-The road to sign-off grade builds on the same emitter + job format: async-pin
-(set/reset) sequential cells and faster bisection. Same `run` command, no license.
+Adds **async set/reset flops**: a `tie:` list holds async/unused inputs at their
+inactive level (through a series R, same de-stiffening) so setup/hold/CK->Q
+characterize normally, and `reset_pin:` emits the `ff` `clear` attribute plus an
+async reset->Q delay arc. Validated on `sky130_fd_sc_hd__dfrtp_1`: clocked timing
+matches the plain dfxtp_1 (setup 0.041, negative hold, CK->Q 0.209 ns), the
+reset->Q delay is ~0.149 ns, and the flop `.lib` round-trips through `vyges-sta-si`
+(reg-to-reg setup+hold timed, the async `clear` arc correctly skipped, not mistaken
+for a data path).
+
+The road to sign-off grade builds on the same emitter + job format: async-set
+(preset) cells, recovery/removal constraints, and faster bisection. Same `run`
+command, no license.

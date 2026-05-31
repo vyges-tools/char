@@ -114,6 +114,13 @@ pub struct CharJob {
     pub clock_pin: String,
     pub data_pin: String,
     pub clock_edge: String,  // "rising" | "falling"
+    // Async set/reset flops: `tie` holds the named pins at a fixed level (their
+    // inactive state) during setup/hold/CK->Q characterization; `reset_pin` (if set)
+    // additionally emits the `ff` clear attribute and characterizes the async
+    // reset->Q delay arc. `reset_active_low` is inferred from the pin name (_B/_N).
+    pub tie: Vec<(String, bool)>, // (pin, held-high?)
+    pub reset_pin: String,
+    pub reset_active_low: bool,
     pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
     pub base_dir: String,
 }
@@ -130,6 +137,25 @@ fn default_ground() -> Vec<String> {
 
 fn names(s: &str) -> Vec<String> {
     s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+}
+
+/// Parse a `pin=0|1, pin=0|1` held-level list (for `tie:`).
+fn tie_levels(s: &str) -> Result<Vec<(String, bool)>, JobError> {
+    s.split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            let (pin, lvl) = t
+                .split_once('=')
+                .ok_or_else(|| JobError(format!("tie entry must be pin=0|1, got {t:?}")))?;
+            let high = match lvl.trim() {
+                "1" | "high" | "H" | "h" => true,
+                "0" | "low" | "L" | "l" => false,
+                _ => return Err(JobError(format!("tie level must be 0 or 1, got {t:?}"))),
+            };
+            Ok((pin.trim().to_string(), high))
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -245,6 +271,17 @@ impl CharJob {
             clock_pin: kv.get("clock_pin").cloned().unwrap_or_default(),
             data_pin: kv.get("data_pin").cloned().unwrap_or_default(),
             clock_edge: kv.get("clock_edge").cloned().unwrap_or_else(|| "rising".into()),
+            tie: kv.get("tie").map(|s| tie_levels(s)).transpose()?.unwrap_or_default(),
+            reset_pin: kv.get("reset_pin").cloned().unwrap_or_default(),
+            reset_active_low: {
+                let rp = kv.get("reset_pin").cloned().unwrap_or_default();
+                match kv.get("reset_active").map(|s| s.as_str()) {
+                    Some("low") | Some("0") => true,
+                    Some("high") | Some("1") => false,
+                    // infer from the pin name: active-low if it ends in _B / _N.
+                    _ => rp.ends_with("_B") || rp.ends_with("_N"),
+                }
+            },
             corners,
             base_dir: base_dir.to_string(),
         };
