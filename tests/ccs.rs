@@ -54,6 +54,9 @@ fn render_emits_output_current_vectors() {
         recv_c2_rise: Table::new(2, 2),
         recv_c1_fall: Table::new(2, 2),
         recv_c2_fall: Table::new(2, 2),
+        int_rise: Table::new(2, 2),
+        int_fall: Table::new(2, 2),
+        leakage: vec![],
     };
     let lib = render("x", &Units::default(), &slews, &loads, &[a]);
     // the tokens vyges-sta-si's parse_ccs_set looks for

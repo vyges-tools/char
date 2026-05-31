@@ -98,6 +98,7 @@ models:  params.spice, corners/tt.spice # device models, included in order
 montecarlo: 8                           # optional: LVF sigma (omit/0 = NLDM only)
 ccs:     true                           # optional: emit CCS output-current waveforms
 recv:    true                           # optional: emit CCS receiver capacitance (input pin)
+power_char: true                        # optional: leakage_power + internal_power
 ```
 
 **Multi-arc cells** (multi-input gates, multi-output cells) replace the single
@@ -327,6 +328,16 @@ t* - clock, both signed — a flop that samples just after the clock 50% tolerat
 late release, giving a small negative recovery). The setup/hold **push-out
 bisection** early-exits at 1 ps precision (~halving the ngspice runs per point).
 
-The road to sign-off grade builds on the same emitter + job format: multi-bit /
-latch cells and a two-sided (distinct recovery vs removal) metastability window.
-Same `run` command, no license.
+Adds **power characterization** (`power_char: true`): per-arc **internal_power**
+(rise/fall switching energy = supply energy minus the load-charging part) and
+per-input-state **leakage_power** (DC quiescent current × VDD), with the
+`leakage_power_unit` header and a `cell_leakage_power` average. Validated on
+`sky130_fd_sc_hd__inv_1`: cell_leakage_power 0.0043 nW vs the foundry 0.0053 nW
+(~19%) and internal energy ~0.007 pJ — right magnitudes and units. This is the
+power data `vyges-em-ir` will drive its dynamic IR analysis with. (v1 caveat: the
+per-state leakage *spread* is narrower than the foundry's N/P asymmetry — a true
+DC `.op` settle would sharpen it; the average correlates well.)
+
+The road to sign-off grade builds on the same emitter + job format: sequential
+power (clock/data pin energy), sharper per-state leakage, multi-bit / latch cells,
+and a two-sided recovery/removal window. Same `run` command, no license.

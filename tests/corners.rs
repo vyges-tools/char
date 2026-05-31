@@ -80,6 +80,9 @@ fn units_carry_corner_nominal_voltage_and_temp() {
         recv_c2_rise: Table::new(1, 1),
         recv_c1_fall: Table::new(1, 1),
         recv_c2_fall: Table::new(1, 1),
+        int_rise: Table::new(2, 2),
+        int_fall: Table::new(2, 2),
+        leakage: vec![],
     };
     let units = Units { nom_voltage: 1.60, nom_temp: -40.0, ..Units::default() };
     let lib = render("INV__ss", &units, &slews, &loads, &[arc]);

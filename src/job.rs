@@ -123,6 +123,7 @@ pub struct CharJob {
     pub reset_active_low: bool,
     pub set_pin: String,
     pub set_active_low: bool,
+    pub power_char: bool,     // characterize internal_power (per arc) + leakage_power (per state)
     pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
     pub base_dir: String,
 }
@@ -289,6 +290,7 @@ impl CharJob {
             reset_active_low: active_low(&kv, "reset_pin", "reset_active"),
             set_pin: kv.get("set_pin").cloned().unwrap_or_default(),
             set_active_low: active_low(&kv, "set_pin", "set_active"),
+            power_char: kv.get("power_char").map(|s| s == "true" || s == "1").unwrap_or(false),
             corners,
             base_dir: base_dir.to_string(),
         };

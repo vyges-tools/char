@@ -21,6 +21,9 @@ fn json_summary_has_tables() {
         recv_c2_rise: Table::new(2, 2),
         recv_c1_fall: Table::new(2, 2),
         recv_c2_fall: Table::new(2, 2),
+        int_rise: Table::new(2, 2),
+        int_fall: Table::new(2, 2),
+        leakage: vec![],
     };
     let j = render_json("lib", &[0.01], &[0.001], &[arc]);
     assert!(j.contains("\"library\":\"lib\""));

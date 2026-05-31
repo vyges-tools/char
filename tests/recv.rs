@@ -39,6 +39,9 @@ fn arc_with_recv() -> Arc {
         recv_c2_rise: tbl(0.0052), // C2 > C1: Miller inflation
         recv_c1_fall: tbl(0.0031),
         recv_c2_fall: tbl(0.0050),
+        int_rise: Table::new(2, 2),
+        int_fall: Table::new(2, 2),
+        leakage: vec![],
     }
 }
 

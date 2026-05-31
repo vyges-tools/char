@@ -145,6 +145,43 @@ fn run_point(
     Ok((delay, oslew))
 }
 
+/// Run an internal-power deck; returns the integrated VDD supply charge (Coulombs)
+/// over the switching event (`qvdd` = ∫i(VVDD)dt).
+#[allow(clippy::too_many_arguments)]
+fn run_power_arc(
+    job: &CharJob,
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    slew: f64,
+    load: f64,
+    rising_input: bool,
+) -> Result<f64, CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let d = spice::deck_power_arc(
+        &format!("pwr {} slew={slew} load={load}", job.cell),
+        &includes,
+        &job.osdi,
+        subckt_call,
+        in_pin,
+        out_pin,
+        job.vdd,
+        slew,
+        load,
+        rising_input,
+    );
+    Ok(run_deck(&d, "qvdd")?.0.unwrap_or(0.0))
+}
+
+/// Run a leakage deck; returns the quiescent VDD current (A) at the held state.
+fn run_leakage(job: &CharJob, wiring: &str) -> Result<f64, CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let d = spice::deck_leakage(&format!("leak {}", job.cell), &includes, &job.osdi, wiring, job.vdd);
+    Ok(run_deck(&d, "ileak")?.0.unwrap_or(0.0))
+}
+
 /// The result of a characterization run: combinational arcs, or a sequential cell.
 pub enum Characterized {
     Comb(Vec<Arc>),
@@ -161,9 +198,89 @@ pub fn characterize(job: &CharJob) -> Result<Characterized, CharError> {
     if job.seq {
         Ok(Characterized::Seq(Box::new(characterize_seq(job)?)))
     } else {
-        let arcs = job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect::<Result<_, _>>()?;
+        let mut arcs: Vec<Arc> =
+            job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect::<Result<_, _>>()?;
+        // Leakage is per-cell (per input state); compute once and carry it on every
+        // arc (the renderer reads it from the first arc of each cell).
+        if job.power_char {
+            let leak = characterize_leakage(job)?;
+            for a in &mut arcs {
+                a.leakage = leak.clone();
+            }
+        }
         Ok(Characterized::Comb(arcs))
     }
+}
+
+/// The cell's combinational input pins: the union of every arc's in_pin plus the
+/// side inputs, in first-seen order.
+fn cell_inputs(job: &CharJob) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for spec in &job.arcs {
+        if !v.iter().any(|p| p.eq_ignore_ascii_case(&spec.in_pin)) {
+            v.push(spec.in_pin.clone());
+        }
+        for (sp, _) in &spec.side {
+            if !v.iter().any(|p| p.eq_ignore_ascii_case(sp)) {
+                v.push(sp.clone());
+            }
+        }
+    }
+    v
+}
+
+/// Wire the cell for leakage: every input pin held at the bit pattern `bits`
+/// (LSB = inputs[0]), outputs floated to their own nets, power/ground tied.
+fn leak_wiring(job: &CharJob, inputs: &[String], bits: usize) -> Result<String, CharError> {
+    let netlist = std::fs::read_to_string(&job.netlist)
+        .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
+    let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
+        CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
+    })?;
+    let mut sources = String::new();
+    let mut nodes = Vec::with_capacity(pins.len());
+    for pin in &pins {
+        let node = if let Some(idx) = inputs.iter().position(|p| p.eq_ignore_ascii_case(pin)) {
+            let v = if (bits >> idx) & 1 == 1 { job.vdd } else { 0.0 };
+            sources.push_str(&format!("V{pin} {pin} 0 {v}\n"));
+            pin.clone()
+        } else if job.power.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
+            "VDD".to_string()
+        } else if job.ground.iter().any(|p| p.eq_ignore_ascii_case(pin)) {
+            "VSS".to_string()
+        } else {
+            pin.clone() // output (or other) — float to its own net
+        };
+        nodes.push(node);
+    }
+    Ok(format!("{sources}X1 {} {}", nodes.join(" "), job.cell))
+}
+
+/// Characterize per-input-state static leakage (nW). Enumerates all 2^n input
+/// states for small cells (n <= 4), else samples the all-low and all-high states.
+/// Returns `(when_expr, nW)` per state.
+fn characterize_leakage(job: &CharJob) -> Result<Vec<(String, f64)>, CharError> {
+    let inputs = cell_inputs(job);
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let n = inputs.len();
+    let states: Vec<usize> =
+        if n <= 4 { (0..(1usize << n)).collect() } else { vec![0, (1usize << n) - 1] };
+    let mut out = Vec::with_capacity(states.len());
+    for bits in states {
+        let wiring = leak_wiring(job, &inputs, bits)?;
+        let ileak = run_leakage(job, &wiring)?;
+        let nw = ileak.abs() * job.vdd * 1e9; // W -> nW
+        let when = inputs
+            .iter()
+            .enumerate()
+            .map(|(i, p)| if (bits >> i) & 1 == 1 { p.clone() } else { format!("!{p}") })
+            .collect::<Vec<_>>()
+            .join("&");
+        out.push((when, nw));
+    }
+    Ok(out)
 }
 
 /// Characterize a single timing arc (in_pin -> out_pin, side inputs held).
@@ -188,6 +305,9 @@ fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, Ch
         recv_c2_rise: Table::new(ns, nl),
         recv_c1_fall: Table::new(ns, nl),
         recv_c2_fall: Table::new(ns, nl),
+        int_rise: Table::new(ns, nl),
+        int_fall: Table::new(ns, nl),
+        leakage: Vec::new(),
     };
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
@@ -232,6 +352,20 @@ fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, Ch
                 let (c1f, c2f) = run_recv_point(job, &instance, in_pin, out_pin, slew, load, false)?;
                 arc.recv_c1_fall.values[i][j] = c1f;
                 arc.recv_c2_fall.values[i][j] = c2f;
+            }
+
+            // Internal switching energy (pJ): supply energy VDD·|∫i_VDD dt| over the
+            // event, minus the load-charging part. A rising output stores ½·C·V² on
+            // the load (delivered from VDD) -> subtract it; a falling output's load
+            // energy discharges to VSS (not from VDD) -> the supply charge is purely
+            // internal/short-circuit, so no subtraction.
+            if job.power_char {
+                let half_cv2 = 0.5 * (load * 1e-12) * job.vdd * job.vdd; // J
+                let qr = run_power_arc(job, &instance, in_pin, out_pin, slew, load, false)?;
+                let er = (job.vdd * qr.abs() - half_cv2).max(0.0) * 1e12; // pJ
+                arc.int_rise.values[i][j] = er;
+                let qf = run_power_arc(job, &instance, in_pin, out_pin, slew, load, true)?;
+                arc.int_fall.values[i][j] = (job.vdd * qf.abs()) * 1e12; // pJ
             }
         }
     }

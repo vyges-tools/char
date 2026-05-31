@@ -58,6 +58,14 @@ pub struct Arc {
     pub recv_c2_rise: Table,
     pub recv_c1_fall: Table,
     pub recv_c2_fall: Table,
+    // Power. `int_rise`/`int_fall` are the internal switching energy (pJ) for this
+    // arc, indexed by (input transition, output load) — the dynamic power the load
+    // charging doesn't account for. `leakage` is the cell's per-input-state static
+    // leakage (when-expression, nW); it's cell-level, carried on every arc of the
+    // cell (the renderer reads it from the first). All empty/zero -> no power.
+    pub int_rise: Table,
+    pub int_fall: Table,
+    pub leakage: Vec<(String, f64)>,
 }
 
 impl Arc {
@@ -213,6 +221,9 @@ pub fn render(
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
     s.push_str(&format!("  capacitive_load_unit (1, \"{}\");\n", units.cap.trim_end_matches(|c: char| c.is_alphabetic())));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
+    if arcs.iter().any(|a| !a.leakage.is_empty()) {
+        s.push_str("  leakage_power_unit : \"1nW\";\n");
+    }
     s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n\n", units.nom_temp, units.nom_voltage));
 
     // Lookup-table template shared by all arcs.
@@ -245,6 +256,18 @@ pub fn render(
     for cell in cell_order {
         let cell_arcs: Vec<&Arc> = arcs.iter().filter(|a| a.cell == cell).collect();
         s.push_str(&format!("  cell ({cell}) {{\n"));
+        // cell leakage: the average over the characterized states + a per-state group.
+        let leak = &cell_arcs[0].leakage;
+        if !leak.is_empty() {
+            let avg = leak.iter().map(|(_, v)| v).sum::<f64>() / leak.len() as f64;
+            s.push_str(&format!("    cell_leakage_power : {avg:.6};\n"));
+            for (when, v) in leak {
+                s.push_str("    leakage_power () {\n");
+                s.push_str(&format!("      when : \"{when}\";\n"));
+                s.push_str(&format!("      value : {v:.6};\n"));
+                s.push_str("    }\n");
+            }
+        }
         // input pins, unique by name, first-seen
         let mut seen_in: Vec<&str> = Vec::new();
         for a in &cell_arcs {
@@ -346,6 +369,20 @@ fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f6
             s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
             s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
             s.push_str("          }\n");
+        }
+        s.push_str("        }\n");
+    }
+    // internal switching power (rise/fall energy), emitted only when characterized.
+    if arc.int_rise.any_nonzero() || arc.int_fall.any_nonzero() {
+        s.push_str("        internal_power () {\n");
+        s.push_str(&format!("          related_pin : \"{}\";\n", arc.in_pin));
+        for (name, t) in [("rise_power", &arc.int_rise), ("fall_power", &arc.int_fall)] {
+            s.push_str(&format!("          {name} ({tmpl}) {{\n"));
+            s.push_str(&format!("            index_1 (\"{}\");\n", fmt_index(slews)));
+            s.push_str(&format!("            index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str("            values ( \\\n");
+            s.push_str(&fmt_table(t, "          "));
+            s.push_str(" );\n          }\n");
         }
         s.push_str("        }\n");
     }

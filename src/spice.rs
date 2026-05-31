@@ -188,6 +188,85 @@ pub fn deck_recv(
     s
 }
 
+/// Build an internal-power deck: same drive as `deck` (input ramp + output load),
+/// but integrates the VDD supply current over the switching window (`qvdd` =
+/// ∫i(VVDD)dt, Coulombs). The engine turns that into switching energy
+/// (VDD·|qvdd|) minus the load-charging part to get the internal energy.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_power_arc(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (internal power)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
+    let tstop = 1.0 + slew_ns + 4.0;
+    s.push_str(&format!(".tran 1p {tstop}n\n"));
+    s.push_str(&format!(".measure tran qvdd INTEG i(VVDD) FROM=0.9n TO={tstop}n\n"));
+    s.push_str(".end\n");
+    s
+}
+
+/// Build a leakage deck: all inputs held at a fixed state (the `subckt_call` wires
+/// the source lines), output open, settle, and read the quiescent VDD current at
+/// the end. The engine turns `ileak` into static leakage power (|ileak|·VDD).
+pub fn deck_leakage(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    vdd: f64,
+) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (leakage)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(".tran 10p 5n\n");
+    s.push_str(".measure tran ileak FIND i(VVDD) AT=4.9n\n");
+    s.push_str(".end\n");
+    s
+}
+
 /// Build a PWL source body `PWL(0 v0 t .. )` from an initial level and a list of
 /// `(t50_ns, target_V)` edges, each ramping over `slew_ns` centred on `t50`.
 fn pwl(init: f64, slew: f64, edges: &[(f64, f64)]) -> String {
