@@ -33,8 +33,9 @@ pub struct Waveform {
 }
 
 /// One timing arc (in_pin -> out_pin) with its four NLDM tables, optional LVF
-/// delay-sigma tables (Monte-Carlo over mismatch), and optional CCS output-current
-/// waveforms. Empty sigma -> no LVF; empty ccs -> no CCS.
+/// delay-sigma tables (Monte-Carlo over mismatch), optional CCS output-current
+/// waveforms, and optional CCS receiver-capacitance tables (input-pin model).
+/// Empty sigma -> no LVF; empty ccs -> no CCS; zero recv tables -> no receiver model.
 #[derive(Debug, Clone)]
 pub struct Arc {
     pub cell: String,
@@ -49,6 +50,41 @@ pub struct Arc {
     pub sigma_fall: Table, // LVF: 1-sigma of cell_fall delay (ns)
     pub ccs_rise: Vec<Waveform>, // CCS output_current_rise, one per (slew,load)
     pub ccs_fall: Vec<Waveform>, // CCS output_current_fall
+    // CCS receiver capacitance on `in_pin` (pF): the two-segment input-pin load a
+    // driver sees. C1 = effective cap over the first half of the input transition
+    // (before the delay threshold, mostly static gate cap); C2 = over the second
+    // half (after the threshold, inflated by Miller from the switching output).
+    pub recv_c1_rise: Table,
+    pub recv_c2_rise: Table,
+    pub recv_c1_fall: Table,
+    pub recv_c2_fall: Table,
+}
+
+impl Arc {
+    /// True if any receiver-capacitance segment was characterized.
+    pub fn has_recv(&self) -> bool {
+        self.recv_c1_rise.any_nonzero()
+            || self.recv_c2_rise.any_nonzero()
+            || self.recv_c1_fall.any_nonzero()
+            || self.recv_c2_fall.any_nonzero()
+    }
+
+    /// Conventional single-number input `capacitance` (pF): the mean static
+    /// (pre-switching) segment over the grid, i.e. the C1 lanes — what a NLDM-only
+    /// tool reads. The receiver_capacitance group carries the fuller C1/C2 split.
+    pub fn nominal_cap(&self) -> f64 {
+        let mean = |t: &Table| {
+            let (mut sum, mut n) = (0.0, 0usize);
+            for row in &t.values {
+                for &v in row {
+                    sum += v;
+                    n += 1;
+                }
+            }
+            if n == 0 { 0.0 } else { sum / n as f64 }
+        };
+        (mean(&self.recv_c1_rise) + mean(&self.recv_c1_fall)) / 2.0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +189,29 @@ pub fn render(
 
     for arc in arcs {
         s.push_str(&format!("  cell ({}) {{\n", arc.cell));
-        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
+        // Input pin: bare `direction : input` unless receiver caps were characterized,
+        // in which case emit the conventional `capacitance` + the CCS receiver model.
+        if arc.has_recv() {
+            s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", arc.in_pin));
+            s.push_str(&format!("      capacitance : {:.6};\n", arc.nominal_cap()));
+            s.push_str("      receiver_capacitance () {\n");
+            for (name, t) in [
+                ("receiver_capacitance1_rise", &arc.recv_c1_rise),
+                ("receiver_capacitance1_fall", &arc.recv_c1_fall),
+                ("receiver_capacitance2_rise", &arc.recv_c2_rise),
+                ("receiver_capacitance2_fall", &arc.recv_c2_fall),
+            ] {
+                s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+                s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+                s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+                s.push_str("          values ( \\\n");
+                s.push_str(&fmt_table(t, "        "));
+                s.push_str(" );\n        }\n");
+            }
+            s.push_str("      }\n    }\n");
+        } else {
+            s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
+        }
         s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", arc.out_pin));
         s.push_str("      timing () {\n");
         s.push_str(&format!("        related_pin : \"{}\";\n", arc.in_pin));

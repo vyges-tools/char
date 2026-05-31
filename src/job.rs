@@ -36,6 +36,7 @@ pub struct CharJob {
     pub osdi: Vec<String>,   // OSDI device-model files to pre_osdi-load (Verilog-A/OSDI PDKs)
     pub montecarlo: usize,   // LVF: Monte-Carlo samples for delay sigma (0 = NLDM only)
     pub ccs: bool,           // CCS: capture output-current waveforms (default false)
+    pub recv: bool,          // CCS: characterize receiver capacitance on in_pin (default false)
     pub base_dir: String,
 }
 
@@ -116,6 +117,7 @@ impl CharJob {
             osdi: kv.get("osdi").map(|s| names(s)).unwrap_or_default(),
             montecarlo: kv.get("montecarlo").and_then(|s| s.parse().ok()).unwrap_or(0),
             ccs: kv.get("ccs").map(|s| s == "true" || s == "1").unwrap_or(false),
+            recv: kv.get("recv").map(|s| s == "true" || s == "1").unwrap_or(false),
             base_dir: base_dir.to_string(),
         };
         job.validate()?;

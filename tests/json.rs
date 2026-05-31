@@ -17,6 +17,10 @@ fn json_summary_has_tables() {
         sigma_fall: vyges_char::liberty::Table::new(0, 0),
         ccs_rise: vec![],
         ccs_fall: vec![],
+        recv_c1_rise: Table::new(2, 2),
+        recv_c2_rise: Table::new(2, 2),
+        recv_c1_fall: Table::new(2, 2),
+        recv_c2_fall: Table::new(2, 2),
     };
     let j = render_json("lib", &[0.01], &[0.001], &[arc]);
     assert!(j.contains("\"library\":\"lib\""));

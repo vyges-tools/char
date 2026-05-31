@@ -139,6 +139,55 @@ pub fn deck_ccs(
     s
 }
 
+/// Build a receiver-capacitance deck: the input `in_pin` is driven through a 0 V
+/// sense source, so `i(Vsin)` is the **current into the input pin**; the output is
+/// loaded (so the output switches and Miller current is captured). The transient
+/// dumps the input current over the ramp window to `dat_path`. The engine integrates
+/// it into the two CCS receiver segments (C1 before / C2 after the 50% threshold).
+#[allow(clippy::too_many_arguments)]
+pub fn deck_recv(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+    dat_path: &str,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (CCS receiver-cap capture)\n"));
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    // Drive a source node; a 0 V sense source carries all the input-pin current.
+    s.push_str(&format!("VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(&format!("Vsin in_src {in_pin} 0\n"));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
+    s.push_str(".control\n");
+    for o in osdi {
+        s.push_str(&format!("pre_osdi {o}\n"));
+    }
+    // Capture the full input ramp [1n, 1n+slew] plus a little settle, finely enough
+    // to integrate the input current into the two receiver segments.
+    let tstop = 1.0 + slew_ns + 1.0;
+    s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
+    s.push_str(&format!("wrdata {dat_path} i(Vsin)\n"));
+    s.push_str(".endc\n");
+    s.push_str(".end\n");
+    s
+}
+
 /// Parse a `wrdata` 2-column dump (time, value) into samples.
 pub fn parse_wrdata(text: &str) -> Vec<(f64, f64)> {
     text.lines()

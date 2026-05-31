@@ -50,6 +50,10 @@ fn render_emits_output_current_vectors() {
         sigma_fall: Table::new(2, 2),
         ccs_rise: vec![wf(0.01, 0.001), wf(0.04, 0.01)],
         ccs_fall: vec![wf(0.01, 0.001)],
+        recv_c1_rise: Table::new(2, 2),
+        recv_c2_rise: Table::new(2, 2),
+        recv_c1_fall: Table::new(2, 2),
+        recv_c2_fall: Table::new(2, 2),
     };
     let lib = render("x", &Units::default(), &slews, &loads, &[a]);
     // the tokens vyges-sta-si's parse_ccs_set looks for

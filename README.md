@@ -97,6 +97,7 @@ temp:    25
 models:  params.spice, corners/tt.spice # device models, included in order
 montecarlo: 8                           # optional: LVF sigma (omit/0 = NLDM only)
 ccs:     true                           # optional: emit CCS output-current waveforms
+recv:    true                           # optional: emit CCS receiver capacitance (input pin)
 ```
 
 ### Running against a real PDK (sky130 example)
@@ -190,6 +191,18 @@ spike peaks ~0.12 mA for a few-fF load (physically sane), and `sta-si` consuming
 the CCS `.lib` shifts WNS by a sensible CCS-vs-NLDM delta. Zero-cost when `ccs` is
 unset.
 
-The road to sign-off grade builds on the same emitter + job format: **receiver**
-pin-capacitance models (`receiver_capacitance`), and multi-arc / sequential cells.
-Same `run` command, no license.
+Adds **CCS receiver capacitance**: with `recv: true`, each (slew,load) point drives
+the input pin through a 0 V sense source and integrates the captured input current
+Q = ∫i·dt over the two halves of the input ramp → the two-segment receiver model
+`receiver_capacitance1/2_rise/fall` (C1 = static gate cap before the delay
+threshold; C2 = after, inflated by Miller from the switching output). The input pin
+also gains the conventional single-number `capacitance` (the C1 lanes). These are
+**the input-pin load `vyges-sta-si` charges its drivers with** — completing the CCS
+model (output current + receiver). Validated on `sky130_fd_sc_hd__inv_1`: C1/C2
+land ~1.8–2.6 fF (matching the foundry input-cap), with C2 inflating over C1 (e.g.
+1.44×) exactly when the output switches during the input's second half; sta-si
+consuming the receiver load shifts WNS by a sensible Miller delta. Zero-cost when
+`recv` is unset.
+
+The road to sign-off grade builds on the same emitter + job format: multi-arc /
+sequential cells and per-corner sweeps. Same `run` command, no license.

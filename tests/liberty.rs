@@ -19,6 +19,10 @@ fn arc() -> Arc {
         sigma_fall: vyges_char::liberty::Table::new(0, 0),
         ccs_rise: vec![],
         ccs_fall: vec![],
+        recv_c1_rise: Table::new(2, 2),
+        recv_c2_rise: Table::new(2, 2),
+        recv_c1_fall: Table::new(2, 2),
+        recv_c2_fall: Table::new(2, 2),
     }
 }
 

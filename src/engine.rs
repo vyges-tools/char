@@ -149,6 +149,10 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
         sigma_fall: Table::new(ns, nl),
         ccs_rise: Vec::new(),
         ccs_fall: Vec::new(),
+        recv_c1_rise: Table::new(ns, nl),
+        recv_c2_rise: Table::new(ns, nl),
+        recv_c1_fall: Table::new(ns, nl),
+        recv_c2_fall: Table::new(ns, nl),
     };
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
@@ -176,6 +180,17 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
             if job.ccs {
                 arc.ccs_rise.push(run_ccs_point(job, &instance, slew, load, false)?);
                 arc.ccs_fall.push(run_ccs_point(job, &instance, slew, load, true)?);
+            }
+
+            // CCS receiver capacitance: integrate the input-pin current into the
+            // two segments (C1 before / C2 after the input 50% crossing).
+            if job.recv {
+                let (c1r, c2r) = run_recv_point(job, &instance, slew, load, true)?;
+                arc.recv_c1_rise.values[i][j] = c1r;
+                arc.recv_c2_rise.values[i][j] = c2r;
+                let (c1f, c2f) = run_recv_point(job, &instance, slew, load, false)?;
+                arc.recv_c1_fall.values[i][j] = c1f;
+                arc.recv_c2_fall.values[i][j] = c2f;
             }
         }
     }
@@ -233,6 +248,100 @@ fn run_ccs_point(
     // sub-sample to ~24 points; time in ns, current magnitude in mA.
     let (time, current) = subsample(&samples, 48);
     Ok(Waveform { slew, load, ref_time: 1.0 + slew / 2.0, time, current })
+}
+
+/// Characterize one CCS receiver-capacitance point: drive the input pin through a
+/// sense source, integrate the captured input current Q = ∫i·dt over the two halves
+/// of the input ramp, and return `(C1, C2)` in pF. C1 = |Q| over [ramp start, input
+/// 50%] / (Vdd/2); C2 = over [input 50%, ramp end] / (Vdd/2). C2 carries the Miller
+/// inflation from the switching output, C1 is the static (pre-threshold) gate cap.
+fn run_recv_point(
+    job: &CharJob,
+    subckt_call: &str,
+    slew: f64,
+    load: f64,
+    rising_input: bool,
+) -> Result<(f64, f64), CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let dat = std::env::temp_dir().join(format!("vyges_recv_{pid}_{n}.dat"));
+    let deck_path = std::env::temp_dir().join(format!("vyges_recv_{pid}_{n}.sp"));
+    let d = spice::deck_recv(
+        &format!("recv {} slew={slew} load={load}", job.cell),
+        &includes,
+        &job.osdi,
+        subckt_call,
+        &job.in_pin,
+        &job.out_pin,
+        job.vdd,
+        slew,
+        load,
+        rising_input,
+        dat.to_string_lossy().as_ref(),
+    );
+    std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
+    let out = Command::new("ngspice")
+        .arg("-b")
+        .arg(&deck_path)
+        .arg("--no-spiceinit")
+        .output()
+        .map_err(|e| CharError::Io(e.to_string()))?;
+    let _ = std::fs::remove_file(&deck_path);
+    let text = std::fs::read_to_string(&dat).map_err(|e| {
+        CharError::Sim(format!(
+            "no receiver waveform written ({e}); ngspice: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    })?;
+    let _ = std::fs::remove_file(&dat);
+    let samples = spice::parse_wrdata(&text);
+    if samples.len() < 2 {
+        return Err(CharError::Sim("receiver waveform has < 2 points".into()));
+    }
+    // ramp window in seconds: starts at 1ns, 50% at 1+slew/2, ends at 1+slew.
+    let (t_start, t_mid, t_end) =
+        (1e-9, (1.0 + slew / 2.0) * 1e-9, (1.0 + slew) * 1e-9);
+    let dv = job.vdd / 2.0; // voltage swing per segment
+    let q1 = trapz_window(&samples, t_start, t_mid).abs();
+    let q2 = trapz_window(&samples, t_mid, t_end).abs();
+    // C = Q/ΔV (Coulombs/Volt = F); ×1e12 -> pF.
+    Ok((q1 / dv * 1e12, q2 / dv * 1e12))
+}
+
+/// Trapezoidal integral of (time_s, current_A) samples over `[t0, t1]` (Coulombs).
+/// Samples are assumed time-sorted; only the in-window interval contributions count.
+fn trapz_window(samples: &[(f64, f64)], t0: f64, t1: f64) -> f64 {
+    let mut q = 0.0;
+    for w in samples.windows(2) {
+        let (ta, ia) = w[0];
+        let (tb, ib) = w[1];
+        if tb <= t0 || ta >= t1 {
+            continue;
+        }
+        // clip the segment to [t0, t1], linearly interpolating current at the clips.
+        let (mut xa, mut ya) = (ta, ia);
+        let (mut xb, mut yb) = (tb, ib);
+        if xa < t0 {
+            ya = lerp(ta, ia, tb, ib, t0);
+            xa = t0;
+        }
+        if xb > t1 {
+            yb = lerp(ta, ia, tb, ib, t1);
+            xb = t1;
+        }
+        q += 0.5 * (ya + yb) * (xb - xa);
+    }
+    q
+}
+
+/// Linear interpolation of the current value at time `t` on the segment (ta,ia)-(tb,ib).
+fn lerp(ta: f64, ia: f64, tb: f64, ib: f64, t: f64) -> f64 {
+    if (tb - ta).abs() < f64::EPSILON {
+        return ia;
+    }
+    ia + (ib - ia) * (t - ta) / (tb - ta)
 }
 
 /// Evenly sub-sample (time_s, current_A) samples to at most `n` points,
