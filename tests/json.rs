@@ -15,6 +15,8 @@ fn json_summary_has_tables() {
         fall_transition: t,
         sigma_rise: vyges_char::liberty::Table::new(0, 0),
         sigma_fall: vyges_char::liberty::Table::new(0, 0),
+        ccs_rise: vec![],
+        ccs_fall: vec![],
     };
     let j = render_json("lib", &[0.01], &[0.001], &[arc]);
     assert!(j.contains("\"library\":\"lib\""));

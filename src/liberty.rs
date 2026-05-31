@@ -21,8 +21,20 @@ impl Table {
     }
 }
 
-/// One timing arc (in_pin -> out_pin) with its four NLDM tables, plus optional
-/// LVF delay-sigma tables (from Monte-Carlo over mismatch). Empty sigma -> no LVF.
+/// A CCS output-current waveform at one (slew, load) grid point: the driver's
+/// output current I(t) over time, plus the reference (input-crossing) time.
+#[derive(Debug, Clone)]
+pub struct Waveform {
+    pub slew: f64,
+    pub load: f64,
+    pub ref_time: f64,
+    pub time: Vec<f64>,    // ns
+    pub current: Vec<f64>, // mA
+}
+
+/// One timing arc (in_pin -> out_pin) with its four NLDM tables, optional LVF
+/// delay-sigma tables (Monte-Carlo over mismatch), and optional CCS output-current
+/// waveforms. Empty sigma -> no LVF; empty ccs -> no CCS.
 #[derive(Debug, Clone)]
 pub struct Arc {
     pub cell: String,
@@ -35,6 +47,8 @@ pub struct Arc {
     pub fall_transition: Table,
     pub sigma_rise: Table, // LVF: 1-sigma of cell_rise delay (ns)
     pub sigma_fall: Table, // LVF: 1-sigma of cell_fall delay (ns)
+    pub ccs_rise: Vec<Waveform>, // CCS output_current_rise, one per (slew,load)
+    pub ccs_fall: Vec<Waveform>, // CCS output_current_fall
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +66,10 @@ impl Default for Units {
 
 fn fmt_index(vals: &[f64]) -> String {
     vals.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", ")
+}
+
+fn fmt_csv(vals: &[f64]) -> String {
+    vals.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join(", ")
 }
 
 fn fmt_table(t: &Table, indent: &str) -> String {
@@ -124,6 +142,15 @@ pub fn render(
     s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(loads)));
     s.push_str("  }\n\n");
 
+    // CCS time-vector template (declared only if any arc carries current waveforms).
+    if arcs.iter().any(|a| !a.ccs_rise.is_empty() || !a.ccs_fall.is_empty()) {
+        s.push_str("  lu_table_template (ccs_tmpl) {\n");
+        s.push_str("    variable_1 : input_net_transition;\n");
+        s.push_str("    variable_2 : total_output_net_capacitance;\n");
+        s.push_str("    variable_3 : time;\n");
+        s.push_str("  }\n\n");
+    }
+
     for arc in arcs {
         s.push_str(&format!("  cell ({}) {{\n", arc.cell));
         s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
@@ -157,6 +184,25 @@ pub fn render(
                 s.push_str(&fmt_table(t, "        "));
                 s.push_str(" );\n        }\n");
             }
+        }
+        // CCS: output-current waveforms (one `vector` per (slew,load) grid point).
+        for (group, wfs) in
+            [("output_current_rise", &arc.ccs_rise), ("output_current_fall", &arc.ccs_fall)]
+        {
+            if wfs.is_empty() {
+                continue;
+            }
+            s.push_str(&format!("        {group} () {{\n"));
+            for w in wfs {
+                s.push_str("          vector (ccs_tmpl) {\n");
+                s.push_str(&format!("            reference_time : {:.6};\n", w.ref_time));
+                s.push_str(&format!("            index_1 (\"{:.6}\");\n", w.slew));
+                s.push_str(&format!("            index_2 (\"{:.6}\");\n", w.load));
+                s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
+                s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
+                s.push_str("          }\n");
+            }
+            s.push_str("        }\n");
         }
         s.push_str("      }\n    }\n  }\n");
     }

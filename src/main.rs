@@ -111,6 +111,8 @@ fn demo_arc() -> (Vec<f64>, Vec<f64>, Arc) {
         fall_transition: t(0.04),
         sigma_rise: Table::new(0, 0),
         sigma_fall: Table::new(0, 0),
+        ccs_rise: vec![],
+        ccs_fall: vec![],
     };
     (slews, loads, arc)
 }

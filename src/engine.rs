@@ -11,7 +11,7 @@ use crate::job::CharJob;
 
 /// Per-process counter for unique temp deck filenames.
 static DECK_SEQ: AtomicUsize = AtomicUsize::new(0);
-use crate::liberty::{self, Arc, Table, Units};
+use crate::liberty::{self, Arc, Table, Units, Waveform};
 use crate::spice;
 
 #[derive(Debug)]
@@ -147,6 +147,8 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
         fall_transition: Table::new(ns, nl),
         sigma_rise: Table::new(ns, nl),
         sigma_fall: Table::new(ns, nl),
+        ccs_rise: Vec::new(),
+        ccs_fall: Vec::new(),
     };
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
@@ -169,9 +171,89 @@ pub fn characterize(job: &CharJob) -> Result<Arc, CharError> {
                 arc.sigma_rise.values[i][j] = stddev(&rise);
                 arc.sigma_fall.values[i][j] = stddev(&fall);
             }
+
+            // CCS: capture the driver output-current waveform per edge.
+            if job.ccs {
+                arc.ccs_rise.push(run_ccs_point(job, &instance, slew, load, false)?);
+                arc.ccs_fall.push(run_ccs_point(job, &instance, slew, load, true)?);
+            }
         }
     }
     Ok(arc)
+}
+
+/// Capture one CCS output-current waveform via `deck_ccs` (wrdata to a temp file),
+/// sub-sampled to a compact set of points; current is stored as magnitude (the
+/// timing carrier) and `ref_time` is the input 50% crossing.
+fn run_ccs_point(
+    job: &CharJob,
+    subckt_call: &str,
+    slew: f64,
+    load: f64,
+    rising_input: bool,
+) -> Result<Waveform, CharError> {
+    let includes: Vec<String> =
+        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let dat = std::env::temp_dir().join(format!("vyges_ccs_{pid}_{n}.dat"));
+    let deck_path = std::env::temp_dir().join(format!("vyges_ccs_{pid}_{n}.sp"));
+    let d = spice::deck_ccs(
+        &format!("ccs {} slew={slew} load={load}", job.cell),
+        &includes,
+        &job.osdi,
+        subckt_call,
+        &job.in_pin,
+        &job.out_pin,
+        job.vdd,
+        slew,
+        load,
+        rising_input,
+        dat.to_string_lossy().as_ref(),
+    );
+    std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
+    let out = Command::new("ngspice")
+        .arg("-b")
+        .arg(&deck_path)
+        .arg("--no-spiceinit")
+        .output()
+        .map_err(|e| CharError::Io(e.to_string()))?;
+    let _ = std::fs::remove_file(&deck_path);
+    let text = std::fs::read_to_string(&dat).map_err(|e| {
+        CharError::Sim(format!(
+            "no CCS waveform written ({e}); ngspice: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    })?;
+    let _ = std::fs::remove_file(&dat);
+    let samples = spice::parse_wrdata(&text);
+    if samples.len() < 2 {
+        return Err(CharError::Sim("CCS waveform has < 2 points".into()));
+    }
+    // sub-sample to ~24 points; time in ns, current magnitude in mA.
+    let (time, current) = subsample(&samples, 48);
+    Ok(Waveform { slew, load, ref_time: 1.0 + slew / 2.0, time, current })
+}
+
+/// Evenly sub-sample (time_s, current_A) samples to at most `n` points,
+/// converting to (ns, |mA|).
+fn subsample(samples: &[(f64, f64)], n: usize) -> (Vec<f64>, Vec<f64>) {
+    let len = samples.len();
+    let step = (len as f64 / n as f64).max(1.0);
+    let mut time = Vec::new();
+    let mut current = Vec::new();
+    let mut k = 0.0;
+    while (k as usize) < len {
+        let (t, i) = samples[k as usize];
+        time.push(t * 1e9); // s -> ns
+        current.push((i * 1e3).abs()); // A -> mA, magnitude (timing carrier)
+        k += step;
+    }
+    if *time.last().unwrap_or(&0.0) < samples[len - 1].0 * 1e9 {
+        time.push(samples[len - 1].0 * 1e9);
+        current.push((samples[len - 1].1 * 1e3).abs());
+    }
+    (time, current)
 }
 
 /// Sample standard deviation (n−1); 0.0 for fewer than two samples.

@@ -17,6 +17,8 @@ fn arc() -> Arc {
         fall_transition: mk(0.4),
         sigma_rise: vyges_char::liberty::Table::new(0, 0),
         sigma_fall: vyges_char::liberty::Table::new(0, 0),
+        ccs_rise: vec![],
+        ccs_fall: vec![],
     }
 }
 

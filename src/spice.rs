@@ -89,6 +89,68 @@ pub fn deck(
     s
 }
 
+/// Build a CCS-capture deck: same drive as `deck`, but a 0 V sense source in
+/// series with the load lets the transient write the **output current waveform**
+/// i(Vsns) to `dat_path` (via `wrdata`, columns: time, current). The tran runs in
+/// a control block (with any OSDI pre-load) so the current vector is dumped.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_ccs(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+    dat_path: &str,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (CCS current capture)\n"));
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    // 0 V sense source between the driver output and the load cap -> i(Vsns) is the
+    // driver's output current.
+    s.push_str(&format!("Vsns {out_pin} {out_pin}_c 0\n"));
+    s.push_str(&format!("CL {out_pin}_c 0 {load_pf}p\n"));
+    s.push_str(".control\n");
+    for o in osdi {
+        s.push_str(&format!("pre_osdi {o}\n"));
+    }
+    // Capture tightly around the switching window (the input ramps 1n..1n+slew):
+    // a fine step over [0.9n, 1n+slew+settle] resolves the ~tens-of-ps current
+    // spike that a coarse 0..5n sweep would alias away.
+    let tstop = 1.0 + slew_ns + 1.5;
+    s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
+    s.push_str(&format!("wrdata {dat_path} i(Vsns)\n"));
+    s.push_str(".endc\n");
+    s.push_str(".end\n");
+    s
+}
+
+/// Parse a `wrdata` 2-column dump (time, value) into samples.
+pub fn parse_wrdata(text: &str) -> Vec<(f64, f64)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let t = it.next()?.parse::<f64>().ok()?;
+            let v = it.next()?.parse::<f64>().ok()?;
+            Some((t, v))
+        })
+        .collect()
+}
+
 /// Find a cell's port list from its `.subckt` definition in a netlist.
 ///
 /// Returns the pin names in declared order (e.g. sky130's

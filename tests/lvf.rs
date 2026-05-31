@@ -39,6 +39,8 @@ fn render_emits_sigma_only_when_present() {
         fall_transition: tbl(0.05),
         sigma_rise: tbl(0.02),
         sigma_fall: tbl(0.02),
+        ccs_rise: vec![],
+        ccs_fall: vec![],
     };
     let lib = render("x", &Units::default(), &slews, &loads, std::slice::from_ref(&a));
     assert!(lib.contains("ocv_sigma_cell_rise"), "LVF sigma must be emitted");

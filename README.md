@@ -95,6 +95,8 @@ loads:   0.0005, 0.002, 0.008           # pF
 vdd:     1.8
 temp:    25
 models:  params.spice, corners/tt.spice # device models, included in order
+montecarlo: 8                           # optional: LVF sigma (omit/0 = NLDM only)
+ccs:     true                           # optional: emit CCS output-current waveforms
 ```
 
 ### Running against a real PDK (sky130 example)
@@ -176,6 +178,18 @@ N seeded Monte-Carlo samples over device **mismatch** (`mc_mm_switch`) and emits
 tables `vyges-sta-si` consumes for POCV**, closing the loop `char → .lib → sta-si`.
 Zero-cost when `montecarlo` is unset (NLDM-only).
 
-The road to sign-off grade builds on the same emitter + job format: **CCS** driver
-current waveforms (`output_current`, the other half `sta-si` consumes), receiver
-pin capacitance, and multi-arc cells. Same `run` command, no license.
+Adds **CCS (composite current source)**: with `ccs: true`, each (slew,load) point
+captures the driver's **output-current waveform** — a 0 V sense source in series
+with the load lets the transient dump `i(out)` over a fine step tightened to the
+switching window — and emits `output_current_rise/fall` vector groups (per-edge
+`reference_time` + time/current sampled to a compact vector). These are **the
+current-source models `vyges-sta-si` drives into its effective-capacitance (Ceff)
+and transient RC-tree solve**, the other half of the `char → .lib → sta-si` loop
+beyond LVF. Validated end-to-end on `sky130_fd_sc_hd__inv_1`: the captured charge
+spike peaks ~0.12 mA for a few-fF load (physically sane), and `sta-si` consuming
+the CCS `.lib` shifts WNS by a sensible CCS-vs-NLDM delta. Zero-cost when `ccs` is
+unset.
+
+The road to sign-off grade builds on the same emitter + job format: **receiver**
+pin-capacitance models (`receiver_capacitance`), and multi-arc / sequential cells.
+Same `run` command, no license.
