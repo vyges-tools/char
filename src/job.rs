@@ -32,6 +32,7 @@ pub struct CharJob {
     pub models: Vec<String>,
     pub power: Vec<String>,  // subckt pins tied to VDD (e.g. VPWR, VPB)
     pub ground: Vec<String>, // subckt pins tied to VSS (e.g. VGND, VNB)
+    pub osdi: Vec<String>,   // OSDI device-model files to pre_osdi-load (Verilog-A/OSDI PDKs)
     pub base_dir: String,
 }
 
@@ -109,6 +110,7 @@ impl CharJob {
                 .unwrap_or_default(),
             power: kv.get("power").map(|s| names(s)).unwrap_or_else(default_power),
             ground: kv.get("ground").map(|s| names(s)).unwrap_or_else(default_ground),
+            osdi: kv.get("osdi").map(|s| names(s)).unwrap_or_default(),
             base_dir: base_dir.to_string(),
         };
         job.validate()?;

@@ -90,6 +90,7 @@ fn run_point(
     let d = spice::deck(
         &format!("char {} slew={slew} load={load}", job.cell),
         &includes,
+        &job.osdi,
         subckt_call,
         &job.in_pin,
         &job.out_pin,

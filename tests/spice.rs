@@ -3,7 +3,7 @@ use vyges_char::spice::{deck, parse_measures, parse_subckt_pins};
 #[test]
 fn deck_has_essentials() {
     let d = deck(
-        "t", &["inv.spice".into()], "X1 A Y VDD VSS INV",
+        "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV",
         "A", "Y", 1.8, 0.04, 0.002, false,
     );
     assert!(d.contains(".include \"inv.spice\""));
@@ -14,6 +14,18 @@ fn deck_has_essentials() {
     assert!(d.contains(".measure tran out_slew"));
     assert!(d.contains(".tran"));
     assert!(d.trim_end().ends_with(".end"));
+    assert!(!d.contains("pre_osdi")); // no OSDI block when none requested
+}
+
+#[test]
+fn deck_emits_osdi_preload() {
+    let d = deck(
+        "t", &["inv.spice".into()], &["psp103.osdi".into(), "hicum.osdi".into()],
+        "X1 A Y VDD VSS INV", "A", "Y", 1.2, 0.04, 0.002, false,
+    );
+    // control block with pre_osdi for each model, before the includes
+    assert!(d.contains(".control\npre_osdi psp103.osdi\npre_osdi hicum.osdi\n.endc"));
+    assert!(d.find("pre_osdi").unwrap() < d.find(".include").unwrap());
 }
 
 #[test]

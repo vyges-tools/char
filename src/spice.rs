@@ -9,9 +9,11 @@ use std::collections::HashMap;
 /// loads `out_pin` with `load_pf`, measuring propagation delay + output slew.
 /// `subckt_call` is the instance line for the cell-under-test (caller wires
 /// the pin order); `includes` are model/netlist `.include` lines.
+#[allow(clippy::too_many_arguments)]
 pub fn deck(
     title: &str,
     includes: &[String],
+    osdi: &[String],
     subckt_call: &str,
     in_pin: &str,
     out_pin: &str,
@@ -24,6 +26,19 @@ pub fn deck(
     let half = vdd / 2.0;
     let mut s = String::new();
     s.push_str(&format!("* {title}\n"));
+    // OSDI device models (e.g. PSP103 / HICUM via OpenVAF) must be registered
+    // before the netlist's `.model` cards are parsed — `pre_osdi` in a leading
+    // control block does that. Needed for PDKs whose devices are Verilog-A/OSDI
+    // (IHP sg13g2, mixed-signal/BCD nodes); empty for plain built-in models.
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            // ngspice `pre_osdi` takes the rest of the line as the path literally —
+            // quotes would become part of the filename, so emit it unquoted.
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
     for inc in includes {
         s.push_str(&format!(".include \"{inc}\"\n"));
     }
