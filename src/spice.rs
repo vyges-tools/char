@@ -44,13 +44,14 @@ pub fn deck(
         }
         s.push_str(".endc\n");
     }
-    // LVF Monte-Carlo: enable device mismatch (sky130/gf180 convention) so the
-    // model's agauss/mismatch terms vary per seeded run.
-    if mc.is_some() {
-        s.push_str(".param mc_mm_switch=1\n");
-    }
     for inc in includes {
         s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    // LVF Monte-Carlo: enable device mismatch (sky130/gf180 convention) so the
+    // model's agauss/mismatch terms vary per seeded run. Emitted AFTER the includes
+    // so it overrides any `mc_mm_switch=0` a PDK params file sets (last .param wins).
+    if mc.is_some() {
+        s.push_str(".param mc_mm_switch=1\n");
     }
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
