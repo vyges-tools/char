@@ -36,6 +36,12 @@ with no control flow to get wrong. char goes further — point it at a reference
 `.lib` (`ref_lib:`) and it derives a cell's arcs itself, so even the per-cell setup
 is data, not script.
 
+**Validate fast, sign off with your tool.** char emits **standard Liberty**, so a
+char-generated library drops into OpenSTA, PrimeTime, or any timer unchanged. Use it
+for the fast inner loop — regenerate or verify a `.lib` in seconds while you iterate —
+and keep the vendor-shipped library for final sign-off if you prefer. Nothing about
+the flow has to change to adopt it; it sits *alongside* what you already run.
+
 ## The problem it solves
 
 Given:
