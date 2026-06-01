@@ -260,9 +260,15 @@ thresholds**, but the deck drove a full-swing ramp over `slew_ns` — making eve
 input ~1.67× too steep and biasing delays/transitions low. Fixed (ramp spans
 `slew_ns / 0.6`): the **rise arcs now correlate to single digits** (inv_2
 `cell_rise` 7%, `rise_transition` 6%) and the weighted error dropped from ~25% to
-~13–20%. The residual is a **general fall-arc under-prediction** (`cell_fall`
-~28%, slew-insensitive — the NMOS pull-down turns on early, so it isn't a
-slew-definition artifact); diagnosing that fall path is the next correlation step.
+~13–20%. The fall-arc residual was then chased to ground and **clears char**:
+re-deriving the worst and cleanest grid points with independent hand-written
+ngspice decks shows char reproduces clean ngspice **to 4 significant figures**, so
+the gap is not a char defect. It is (a) a clean ~15% **ngspice-vs-shipped-vendor-`.lib`
+floor** at large load (a symmetric rise-slow/fall-fast P/N drive-strength skew that
+raw ngspice also shows — a known sky130 re-characterization gap) and (b) an **NLDM
+small-load degeneracy** (slow input + tiny load trips the gate before input-50%, so
+the measured delay is near-zero/negative — physically real, and raw ngspice does the
+same). We did not fudge the device model to chase the vendor number.
 See the strategy repo's `char-foundry-correlation.md`.
 
 Adds **LVF (statistical OCV)**: with `montecarlo: N`, each (slew,load) point runs
