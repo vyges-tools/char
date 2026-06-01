@@ -5,6 +5,20 @@
 
 use std::collections::HashMap;
 
+/// Liberty `index_1` (input_net_transition) is the input edge measured between the
+/// slew thresholds — sky130/gf180 use 20%–80%, a 0.6 fraction of the full swing. A
+/// linear PWL ramped full-swing over `t` has a 20–80% transition of `0.6·t`, so to
+/// make the *measured* input transition equal the table's `slew` index, the ramp must
+/// span `slew / SLEW_FRAC` full-swing. (Driving full-swing over `slew` directly — the
+/// pre-correlation behaviour — made every input ~1.67× too steep, biasing delays and
+/// transitions low; see the foundry .lib correlation.)
+pub const SLEW_FRAC: f64 = 0.6;
+
+/// Full-swing ramp time (ns) whose threshold-to-threshold transition equals `slew_ns`.
+fn ramp_ns(slew_ns: f64) -> f64 {
+    slew_ns / SLEW_FRAC
+}
+
 /// Build a transient deck that drives `in_pin` with a ramp of `slew_ns` and
 /// loads `out_pin` with `load_pf`, measuring propagation delay + output slew.
 /// `subckt_call` is the instance line for the cell-under-test (caller wires
@@ -58,7 +72,7 @@ pub fn deck(
     // PWL input ramp: flat, then ramp over slew_ns starting at 1ns.
     s.push_str(&format!(
         "VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n",
-        1.0 + slew_ns
+        1.0 + ramp_ns(slew_ns)
     ));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
@@ -115,7 +129,7 @@ pub fn deck_ccs(
     }
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
-    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
         s.push('\n');
@@ -131,7 +145,7 @@ pub fn deck_ccs(
     // Capture tightly around the switching window (the input ramps 1n..1n+slew):
     // a fine step over [0.9n, 1n+slew+settle] resolves the ~tens-of-ps current
     // spike that a coarse 0..5n sweep would alias away.
-    let tstop = 1.0 + slew_ns + 1.5;
+    let tstop = 1.0 + ramp_ns(slew_ns) + 1.5;
     s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
     s.push_str(&format!("wrdata {dat_path} i(Vsns)\n"));
     s.push_str(".endc\n");
@@ -167,7 +181,7 @@ pub fn deck_recv(
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
     // Drive a source node; a 0 V sense source carries all the input-pin current.
-    s.push_str(&format!("VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(&format!("VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
     s.push_str(&format!("Vsin in_src {in_pin} 0\n"));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
@@ -180,7 +194,7 @@ pub fn deck_recv(
     }
     // Capture the full input ramp [1n, 1n+slew] plus a little settle, finely enough
     // to integrate the input current into the two receiver segments.
-    let tstop = 1.0 + slew_ns + 1.0;
+    let tstop = 1.0 + ramp_ns(slew_ns) + 1.0;
     s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
     s.push_str(&format!("wrdata {dat_path} i(Vsin)\n"));
     s.push_str(".endc\n");
@@ -220,13 +234,13 @@ pub fn deck_power_arc(
     }
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
-    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + slew_ns));
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
         s.push('\n');
     }
     s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
-    let tstop = 1.0 + slew_ns + 4.0;
+    let tstop = 1.0 + ramp_ns(slew_ns) + 4.0;
     s.push_str(&format!(".tran 1p {tstop}n\n"));
     s.push_str(&format!(".measure tran qvdd INTEG i(VVDD) FROM=0.9n TO={tstop}n\n"));
     s.push_str(".end\n");

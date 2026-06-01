@@ -253,11 +253,17 @@ libraries on a commercial node come with that node's plugin.
 ## Current state (2026-05-31)
 
 Emits an **NLDM** (delay + transition lookup tables) from a single-stage
-transient deck, **validated against a real PDK**: re-characterizing
-`sky130_fd_sc_hd__inv_1` over the foundry reference grid correlates to the
-shipped `.lib` to ~13% mean on `cell_rise` (~25% weighted across all four
-tables) — the expected gap for NLDM versus the foundry's CCS sign-off
-characterization.
+transient deck, **correlated cell-by-cell against the foundry `.lib`** on the
+exact reference grid. The correlation surfaced a real bug: `index_1`
+(input_net_transition) is the input edge measured between the **20–80% slew
+thresholds**, but the deck drove a full-swing ramp over `slew_ns` — making every
+input ~1.67× too steep and biasing delays/transitions low. Fixed (ramp spans
+`slew_ns / 0.6`): the **rise arcs now correlate to single digits** (inv_2
+`cell_rise` 7%, `rise_transition` 6%) and the weighted error dropped from ~25% to
+~13–20%. The residual is a **general fall-arc under-prediction** (`cell_fall`
+~28%, slew-insensitive — the NMOS pull-down turns on early, so it isn't a
+slew-definition artifact); diagnosing that fall path is the next correlation step.
+See the strategy repo's `char-foundry-correlation.md`.
 
 Adds **LVF (statistical OCV)**: with `montecarlo: N`, each (slew,load) point runs
 N seeded Monte-Carlo samples over device **mismatch** (`mc_mm_switch`) and emits
