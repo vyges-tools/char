@@ -19,7 +19,7 @@ fn stddev_is_sample_stddev() {
 fn deck_monte_carlo_seed_and_mismatch() {
     let d = deck(
         "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV", "A", "Y", 1.8, 0.04, 0.002, false,
-        Some(7),
+        true, Some(7),
     );
     assert!(d.contains("set rndseed=7"), "MC run must seed the RNG");
     assert!(d.contains(".param mc_mm_switch=1"), "MC run must enable mismatch");

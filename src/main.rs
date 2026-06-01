@@ -11,15 +11,17 @@ use std::process::exit;
 
 use vyges_char::engine;
 use vyges_char::job::CharJob;
+use vyges_char::library;
 use vyges_char::liberty::{self, Arc, Table, Units};
 
 const USAGE: &str = "\
 vyges-char — standard-cell timing characterization (SPICE -> Liberty)
 
 usage:
-  vyges-char run   JOB [-o OUT] [--json]
-  vyges-char check JOB
-  vyges-char demo  [-o OUT] [--json]
+  vyges-char run     JOB      [-o OUT] [--json]   characterize one cell
+  vyges-char library MANIFEST  [-o DIR]           characterize many cells (parallel) -> merged .lib
+  vyges-char check   JOB
+  vyges-char demo    [-o OUT] [--json]
 
 flags:
   -o FILE          write output to FILE (default: stdout)
@@ -196,6 +198,66 @@ fn main() {
                             }
                             eprintln!("wrote {path}");
                         }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    exit(1);
+                }
+            }
+        }
+        "library" => {
+            let Some(path) = cli.positionals.get(1) else {
+                eprintln!("usage: vyges-char library MANIFEST [-o OUTDIR]");
+                exit(2);
+            };
+            let ljob = match library::LibraryJob::load(path) {
+                Ok(j) => j,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    exit(2);
+                }
+            };
+            if cli.verbose {
+                eprintln!("characterizing {} cell(s) on {} thread(s)", ljob.jobs.len(), ljob.threads);
+            }
+            let t0 = std::time::Instant::now();
+            match library::run_library(&ljob) {
+                Ok(res) => {
+                    let dir = cli.out.as_deref();
+                    if let Some(d) = dir {
+                        if let Err(e) = std::fs::create_dir_all(d) {
+                            eprintln!("error: creating {d}: {e}");
+                            exit(1);
+                        }
+                    }
+                    for (corner, text) in &res.libs {
+                        match dir {
+                            Some(d) => {
+                                let name = if corner.is_empty() {
+                                    format!("{d}/{}.lib", ljob.library)
+                                } else {
+                                    format!("{d}/{}__{corner}.lib", ljob.library)
+                                };
+                                if let Err(e) = std::fs::write(&name, text) {
+                                    eprintln!("error: writing {name}: {e}");
+                                    exit(1);
+                                }
+                                eprintln!("wrote {name}");
+                            }
+                            None => print!("{text}"),
+                        }
+                    }
+                    let ok = res.cells - res.failures.len();
+                    eprintln!(
+                        "characterized {}/{} cell(s) in {:.1}s",
+                        ok, res.cells, t0.elapsed().as_secs_f64()
+                    );
+                    for (cell, err) in &res.failures {
+                        eprintln!("  FAILED {cell}: {err}");
+                    }
+                    if !res.failures.is_empty() {
+                        exit(1);
                     }
                 }
                 Err(e) => {

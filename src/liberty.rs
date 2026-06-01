@@ -206,6 +206,27 @@ pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) ->
     s
 }
 
+/// Library-level measurement thresholds — declared so a consumer interprets the
+/// tables at the points char actually measured: 50% for delay, 20–80% for slew
+/// (matching the foundry `.lib` convention). Without these OpenSTA errors with
+/// "missing one or more thresholds".
+const THRESHOLDS: &str = "\
+  slew_lower_threshold_pct_rise : 20.0;\n\
+  slew_upper_threshold_pct_rise : 80.0;\n\
+  slew_lower_threshold_pct_fall : 20.0;\n\
+  slew_upper_threshold_pct_fall : 80.0;\n\
+  input_threshold_pct_rise : 50.0;\n\
+  input_threshold_pct_fall : 50.0;\n\
+  output_threshold_pct_rise : 50.0;\n\
+  output_threshold_pct_fall : 50.0;\n\
+  slew_derate_from_library : 1.0;\n";
+
+/// The capacitive-load unit token (e.g. `pf`) — the alphabetic suffix of a unit
+/// string like `1pf`. (Liberty wants `capacitive_load_unit (1, pf);`, unquoted.)
+fn cap_unit(cap: &str) -> &str {
+    cap.trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == ' ')
+}
+
 /// Render a complete single-library `.lib` for the given arcs.
 pub fn render(
     library: &str,
@@ -219,12 +240,14 @@ pub fn render(
     s.push_str(&format!("library ({library}) {{\n"));
     s.push_str("  delay_model : table_lookup;\n");
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
-    s.push_str(&format!("  capacitive_load_unit (1, \"{}\");\n", units.cap.trim_end_matches(|c: char| c.is_alphabetic())));
+    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
     if arcs.iter().any(|a| !a.leakage.is_empty()) {
         s.push_str("  leakage_power_unit : \"1nW\";\n");
     }
-    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n\n", units.nom_temp, units.nom_voltage));
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(THRESHOLDS);
+    s.push('\n');
 
     // Lookup-table template shared by all arcs.
     s.push_str(&format!("  lu_table_template ({tmpl}) {{\n"));
@@ -407,12 +430,11 @@ pub fn render_seq(
     s.push_str(&format!("library ({library}) {{\n"));
     s.push_str("  delay_model : table_lookup;\n");
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
-    s.push_str(&format!(
-        "  capacitive_load_unit (1, \"{}\");\n",
-        units.cap.trim_end_matches(|c: char| c.is_alphabetic())
-    ));
+    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
-    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n\n", units.nom_temp, units.nom_voltage));
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(THRESHOLDS);
+    s.push('\n');
 
     // CK->Q delay template (slew x load) + constraint template (clk x data slew).
     s.push_str(&format!("  lu_table_template ({nldm}) {{\n"));
@@ -543,5 +565,122 @@ pub fn render_seq_json(library: &str, slews: &[f64], loads: &[f64], cell: &SeqCe
     s.push_str(&format!("\"hold_fall\":[{}],", table(&cell.hold_fall)));
     s.push_str(&format!("\"ckq_rise\":[{}],", table(&cell.ckq_rise)));
     s.push_str(&format!("\"ckq_fall\":[{}]}}\n", table(&cell.ckq_fall)));
+    s
+}
+
+// ---- library-scale merge ------------------------------------------------
+
+/// Library-level scalar attributes (delay_model, *_unit, nom_*) of a rendered
+/// `.lib`: the lines after `library (...) {` and before the first template/cell.
+fn header_attrs(lib: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_lib = false;
+    for line in lib.lines() {
+        let t = line.trim();
+        if !in_lib {
+            if t.starts_with("library (") {
+                in_lib = true;
+            }
+            continue;
+        }
+        if t.starts_with("lu_table_template") || t.starts_with("cell (") || t.starts_with("cell(") {
+            break;
+        }
+        if !t.is_empty() {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Extract every brace-balanced `keyword (name) { ... }` block from a `.lib`,
+/// returning `(name, block_text)` in source order. Used to lift templates and
+/// cell groups out of per-cell libraries for merging.
+fn extract_blocks(lib: &str, keyword: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = lib.lines().collect();
+    let kw_sp = format!("{keyword} (");
+    let kw_np = format!("{keyword}(");
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t.starts_with(&kw_sp) || t.starts_with(&kw_np) {
+            let name = t
+                .split('(')
+                .nth(1)
+                .and_then(|r| r.split(')').next())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let mut depth = 0i32;
+            let mut started = false;
+            let mut block = String::new();
+            let mut j = i;
+            while j < lines.len() {
+                block.push_str(lines[j]);
+                block.push('\n');
+                for c in lines[j].chars() {
+                    match c {
+                        '{' => {
+                            depth += 1;
+                            started = true;
+                        }
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                j += 1;
+                if started && depth <= 0 {
+                    break;
+                }
+            }
+            out.push((name, block.trim_end().to_string()));
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Merge several single-cell `.lib` strings (sharing a slew/load grid) into one
+/// library: a unioned header, the unique `lu_table_template`s (by name), and
+/// every cell group. The library-scale deliverable.
+pub fn merge_libraries(library: &str, libs: &[String]) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("library ({library}) {{\n"));
+    // union library-level attributes (first-seen order across inputs).
+    let mut attrs: Vec<String> = Vec::new();
+    for lib in libs {
+        for line in header_attrs(lib) {
+            if !attrs.iter().any(|a| a == &line) {
+                attrs.push(line);
+            }
+        }
+    }
+    for a in &attrs {
+        s.push_str("  ");
+        s.push_str(a);
+        s.push('\n');
+    }
+    s.push('\n');
+    // unique templates by name.
+    let mut seen = std::collections::BTreeSet::new();
+    for lib in libs {
+        for (name, block) in extract_blocks(lib, "lu_table_template") {
+            if seen.insert(name) {
+                s.push_str(&block);
+                s.push_str("\n\n");
+            }
+        }
+    }
+    // every cell group, in input (cell) order.
+    for lib in libs {
+        for (_n, block) in extract_blocks(lib, "cell") {
+            s.push_str(&block);
+            s.push_str("\n\n");
+        }
+    }
+    s.push_str("}\n");
     s
 }

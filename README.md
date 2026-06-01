@@ -75,12 +75,33 @@ directly and only reach for `vyges-char` to fill those gaps.
 # prebuilt binaries: dist/<triple>/vyges-char  (or build it yourself:)
 cargo build --release            # std-only, no external deps
 
-vyges-char run  cell.char -o cell.lib   # characterize (needs ngspice + models)
-vyges-char run  cell.char --json        # machine-readable summary instead of Liberty
-vyges-char check cell.char              # validate the job, print a summary
-vyges-char demo                         # print a sample .lib (no sim)
+vyges-char run     cell.char -o cell.lib   # characterize one cell (needs ngspice + models)
+vyges-char run     cell.char --json        # machine-readable summary instead of Liberty
+vyges-char library lib.charlib -o out -v   # characterize many cells in parallel -> merged .lib
+vyges-char check   cell.char               # validate the job, print a summary
+vyges-char demo                            # print a sample .lib (no sim)
 # common flags: -o FILE · --json · -q/--quiet · -v/--verbose · -h/--help · -V/--version
 ```
+
+### Library scale (`library`)
+
+A whole library is just many per-cell jobs run together. A `.charlib` manifest
+names them (or a directory of them) and a thread count; cells are characterized
+**in parallel** — each `ngspice` point is a subprocess, so the simulator is the
+bottleneck and the pool scales the run across cores — then merged per corner into
+a single `.lib` (one shared header, the union of lookup-table templates, every
+cell group). A cell that fails to characterize is reported and dropped, never
+sinking the whole library.
+
+```text
+library:  sky130_fd_sc_hd_subset
+threads:  12                      # default: available parallelism
+jobs_dir: cells                   # every *.char in a dir (or `jobs: a.char, b.char`)
+```
+
+`vyges-char library lib.charlib -o out/` writes `out/<library>.lib` (or one
+`out/<library>__<corner>.lib` per corner). Mixed combinational + sequential cells
+merge into one well-formed library.
 
 A job (`*.char`) is a few `key: value` lines:
 

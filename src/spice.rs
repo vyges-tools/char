@@ -35,6 +35,7 @@ pub fn deck(
     slew_ns: f64,
     load_pf: f64,
     rising_input: bool,
+    out_rises: bool,
     mc: Option<u64>,
 ) -> String {
     let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
@@ -81,22 +82,25 @@ pub fn deck(
     s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
     s.push_str(".tran 1p 20n\n");
     let in_dir = if rising_input { "RISE=1" } else { "FALL=1" };
-    let out_dir = if rising_input { "FALL=1" } else { "RISE=1" }; // inverting arc
+    // Output edge is set by the arc's unateness, not by the input: a negative-unate
+    // (inverting) arc's output moves opposite the input; a positive-unate (buffer/
+    // and/or) arc's output moves with it. `out_rises` carries that decision.
+    let out_dir = if out_rises { "RISE=1" } else { "FALL=1" };
     s.push_str(&format!(
         ".measure tran prop_delay TRIG v({in_pin}) VAL={half} {in_dir} \
          TARG v({out_pin}) VAL={half} {out_dir}\n"
     ));
-    // output transition 20%-80% (or 80%-20%)
+    // output transition 20%-80% (rising) or 80%-20% (falling)
     let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
-    if rising_input {
-        s.push_str(&format!(
-            ".measure tran out_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
-             TARG v({out_pin}) VAL={lo} FALL=1\n"
-        ));
-    } else {
+    if out_rises {
         s.push_str(&format!(
             ".measure tran out_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
              TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran out_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
         ));
     }
     s.push_str(".end\n");

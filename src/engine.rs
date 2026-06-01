@@ -99,6 +99,7 @@ fn run_point(
     slew: f64,
     load: f64,
     rising_input: bool,
+    out_rises: bool,
     mc: Option<u64>,
 ) -> Result<(f64, f64), CharError> {
     let includes: Vec<String> = std::iter::once(job.netlist.clone())
@@ -115,6 +116,7 @@ fn run_point(
         slew,
         load,
         rising_input,
+        out_rises,
         mc,
     );
     // Write the deck to a temp file and pass its path: `ngspice -b -` (deck on
@@ -309,13 +311,21 @@ fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, Ch
         int_fall: Table::new(ns, nl),
         leakage: Vec::new(),
     };
+    // cell_rise/cell_fall are keyed by the OUTPUT edge. The input edge that drives
+    // a rising output depends on unateness: a negative-unate (inverting) arc rises
+    // on a falling input; a positive-unate (buffer/and/or) arc rises on a rising
+    // input. (non_unate keeps the inverting convention — its definite direction is
+    // set by the side-input state.)
+    let positive = spec.sense == "positive_unate";
     for (i, &slew) in job.slews.iter().enumerate() {
         for (j, &load) in job.loads.iter().enumerate() {
-            // nominal point: falling input -> rising output (cell_rise), vice versa.
-            let (dr, tr) = run_point(job, &instance, in_pin, out_pin, slew, load, false, None)?;
+            // cell_rise: output rises; cell_fall: output falls.
+            let (dr, tr) =
+                run_point(job, &instance, in_pin, out_pin, slew, load, positive, true, None)?;
             arc.cell_rise.values[i][j] = dr * 1e9;
             arc.rise_transition.values[i][j] = tr * 1e9;
-            let (df, tf) = run_point(job, &instance, in_pin, out_pin, slew, load, true, None)?;
+            let (df, tf) =
+                run_point(job, &instance, in_pin, out_pin, slew, load, !positive, false, None)?;
             arc.cell_fall.values[i][j] = df * 1e9;
             arc.fall_transition.values[i][j] = tf * 1e9;
 
@@ -325,11 +335,13 @@ fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, Ch
                 let mut fall = Vec::with_capacity(job.montecarlo);
                 for k in 0..job.montecarlo as u64 {
                     rise.push(
-                        run_point(job, &instance, in_pin, out_pin, slew, load, false, Some(k))?.0
+                        run_point(job, &instance, in_pin, out_pin, slew, load, positive, true, Some(k))?
+                            .0
                             * 1e9,
                     );
                     fall.push(
-                        run_point(job, &instance, in_pin, out_pin, slew, load, true, Some(k))?.0
+                        run_point(job, &instance, in_pin, out_pin, slew, load, !positive, false, Some(k))?
+                            .0
                             * 1e9,
                     );
                 }
