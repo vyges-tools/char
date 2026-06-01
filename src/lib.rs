@@ -11,6 +11,7 @@
 //! only the actual sim run needs the EDA environment.
 
 pub mod job;
+pub mod arcs;
 pub mod liberty;
 pub mod spice;
 pub mod engine;

@@ -142,6 +142,26 @@ output, a `timing ()` group per arc) — and the A->Y vs B->Y delays come out
 distinct (the series-stack input nearer the output switches faster), which is
 exactly why each arc must be characterized, not copied.
 
+**Arc auto-derivation** (`function:`) — for cells whose arcs are tedious to hand-write
+(XORs, AOI/OAI compounds), give the output pin's Boolean **function** instead of `arc:`
+lines and char derives the arcs by cofactor analysis: which inputs the output responds
+to, the sense (positive/negative-unate), and a sensitizing side-input state per arc.
+The function uses Liberty operators (`'`/`!` NOT, `*`/`&`/juxtaposition AND, `^` XOR,
+`+`/`|` OR) — copy it straight from the PDK `.lib`:
+
+```text
+cell:     sky130_fd_sc_hd__a21oi_2
+netlist:  sky130_fd_sc_hd.spice
+slews:    0.05, 0.20
+loads:    0.002, 0.010
+function: Y = (!A1&!B1) | (!A2&!B1)     # 3 arcs (A1,A2,B1 -> Y), all derived
+#function: X = A ^ B                    # XOR: non-unate, derived under a definite side
+```
+
+This makes `char library` over a real netlist's cell list practical without
+hand-authoring every compound cell's arcs. (Reading the function automatically from a
+reference `.lib` — so even the `function:` line is unnecessary — is the next step.)
+
 **Sequential cells** (flip-flops) characterize the setup/hold constraints on the
 data pin and the CK->Q delay arc instead of combinational arcs:
 

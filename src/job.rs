@@ -202,6 +202,7 @@ impl CharJob {
         let mut kv: BTreeMap<String, String> = BTreeMap::new();
         // `arc:`/`corner:` may repeat; collect them outside the dedup map.
         let mut arc_lines: Vec<String> = Vec::new();
+        let mut function_lines: Vec<String> = Vec::new();
         let mut corner_lines: Vec<String> = Vec::new();
         for raw in text.lines() {
             let line = strip_comment(raw).trim();
@@ -214,6 +215,7 @@ impl CharJob {
             let key = k.trim().to_lowercase();
             match key.as_str() {
                 "arc" => arc_lines.push(v.trim().to_string()),
+                "function" => function_lines.push(v.trim().to_string()),
                 "corner" => corner_lines.push(v.trim().to_string()),
                 _ => {
                     kv.insert(key, v.trim().to_string());
@@ -232,17 +234,30 @@ impl CharJob {
         // single arc from in_pin/out_pin/sense (the back-compatible single-arc form).
         // Sequential jobs don't use combinational arcs (data_pin/clock_pin drive the
         // setup/hold + CK->Q characterization instead), so the arc list stays empty.
+        // Arc precedence: explicit `arc:` lines win; else auto-derive from `function:`
+        // lines (`OUT = boolean`); else the back-compatible single in/out/sense form.
         let arcs: Vec<ArcSpec> = if is_seq {
             Vec::new()
-        } else if arc_lines.is_empty() {
+        } else if !arc_lines.is_empty() {
+            arc_lines.iter().map(|l| parse_arc_spec(l)).collect::<Result<_, _>>()?
+        } else if !function_lines.is_empty() {
+            let mut v = Vec::new();
+            for fl in &function_lines {
+                let (out, func) = fl
+                    .split_once('=')
+                    .ok_or_else(|| JobError(format!("function needs 'OUT = expr', got {fl:?}")))?;
+                let derived = crate::arcs::derive_arcs(out.trim(), func.trim())
+                    .map_err(|e| JobError(format!("function {fl:?}: {e}")))?;
+                v.extend(derived);
+            }
+            v
+        } else {
             vec![ArcSpec {
                 in_pin: get("in_pin")?,
                 out_pin: get("out_pin")?,
                 sense: kv.get("sense").cloned().unwrap_or_else(|| "negative_unate".into()),
                 side: Vec::new(),
             }]
-        } else {
-            arc_lines.iter().map(|l| parse_arc_spec(l)).collect::<Result<_, _>>()?
         };
         let (in_pin, out_pin, sense) = match arcs.first() {
             Some(a) => (a.in_pin.clone(), a.out_pin.clone(), a.sense.clone()),
