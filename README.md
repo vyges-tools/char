@@ -27,6 +27,15 @@ ngspice/Xyce), so users mostly reuse pre-characterized libraries and skip it.
 `vyges-char` makes the generate-and-verify path open and scriptable, behind the
 same Liberty file format everything downstream already speaks.
 
+**Describe the job, not the script.** The incumbent flows are driven by
+hand-written **Tcl** — a recurring source of silent typos, copy-paste drift across
+cells and corners, and brittle maintenance. Every Vyges tool is instead configured
+by a small **declarative job file** (`.char` here; `.sta`, `.ext`, `.charlib`,
+`.emir` across the toolchain): readable, diffable, schema-checkable, and reusable,
+with no control flow to get wrong. char goes further — point it at a reference
+`.lib` (`ref_lib:`) and it derives a cell's arcs itself, so even the per-cell setup
+is data, not script.
+
 ## The problem it solves
 
 Given:
