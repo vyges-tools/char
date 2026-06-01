@@ -233,3 +233,117 @@ pub fn derive_arcs(out_pin: &str, function: &str) -> Result<Vec<ArcSpec>, String
     }
     Ok(arcs)
 }
+
+// ---- arc derivation straight from a reference Liberty -------------------
+
+/// Extract a brace-balanced `keyword (name) { ... }` block whose paren-name
+/// (quotes stripped) equals `want`; or any such block when `want` is empty.
+fn block_after<'a>(lines: &'a [&'a str], start: usize, kw: &str) -> Option<(String, usize, usize)> {
+    let kw_sp = format!("{kw} (");
+    let kw_np = format!("{kw}(");
+    let mut i = start;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t.starts_with(&kw_sp) || t.starts_with(&kw_np) {
+            let name = t
+                .split('(')
+                .nth(1)
+                .and_then(|r| r.split(')').next())
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            let mut depth = 0i32;
+            let mut started = false;
+            let mut j = i;
+            while j < lines.len() {
+                for c in lines[j].chars() {
+                    match c {
+                        '{' => {
+                            depth += 1;
+                            started = true;
+                        }
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                j += 1;
+                if started && depth <= 0 {
+                    break;
+                }
+            }
+            return Some((name, i, j));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether a pin block declares `direction : output` (robust to inline/own-line).
+fn pin_is_output(lines: &[&str]) -> bool {
+    let joined = lines.join(" ");
+    for seg in joined.split(';') {
+        if let Some((k, v)) = seg.split_once(':') {
+            // last word, so an inline "pin (A) { direction" still matches
+            if k.split_whitespace().last() == Some("direction") {
+                return v.contains("output");
+            }
+        }
+    }
+    false
+}
+
+/// The `function : "..."` value inside a pin block, if any. Robust to inline or
+/// own-line attributes, and excludes `power_down_function` (key must be exactly
+/// `function`).
+fn pin_function(lines: &[&str]) -> Option<String> {
+    let joined = lines.join(" ");
+    for seg in joined.split(';') {
+        if let Some((k, v)) = seg.split_once(':') {
+            // exact last word "function" (so power_down_function is excluded)
+            if k.split_whitespace().last() == Some("function") {
+                let q = v.find('"')?;
+                let rest = &v[q + 1..];
+                let end = rest.find('"')?;
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Derive all of a cell's combinational arcs straight from a **reference
+/// Liberty**: find the cell, then for each output pin with a Boolean `function`,
+/// derive its arcs. This is what makes `char library` netlist-driven — no
+/// hand-authored `arc:`/`function:` lines, just a PDK `.lib` to read structure
+/// from (char still measures the values in SPICE).
+pub fn arcs_from_lib(lib_text: &str, cell: &str) -> Result<Vec<ArcSpec>, String> {
+    let lines: Vec<&str> = lib_text.lines().collect();
+    // locate the cell block
+    let mut i = 0;
+    let (cs, ce) = loop {
+        let (name, s, e) = block_after(&lines, i, "cell")
+            .ok_or_else(|| format!("cell {cell:?} not found in reference lib"))?;
+        if name == cell {
+            break (s, e);
+        }
+        i = e;
+    };
+    let cell_lines = &lines[cs..ce];
+    // each pin block; keep output pins that carry a combinational function
+    let mut arcs = Vec::new();
+    let mut p = 0;
+    while let Some((pin, ps, pe)) = block_after(cell_lines, p, "pin") {
+        let pin_lines = &cell_lines[ps..pe];
+        if pin_is_output(pin_lines) {
+            if let Some(func) = pin_function(pin_lines) {
+                arcs.extend(derive_arcs(&pin, &func)?);
+            }
+        }
+        p = pe;
+    }
+    if arcs.is_empty() {
+        return Err(format!("no combinational output function found for {cell} in reference lib"));
+    }
+    Ok(arcs)
+}

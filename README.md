@@ -159,8 +159,25 @@ function: Y = (!A1&!B1) | (!A2&!B1)     # 3 arcs (A1,A2,B1 -> Y), all derived
 ```
 
 This makes `char library` over a real netlist's cell list practical without
-hand-authoring every compound cell's arcs. (Reading the function automatically from a
-reference `.lib` — so even the `function:` line is unnecessary — is the next step.)
+hand-authoring every compound cell's arcs.
+
+**Fully netlist-driven** (`ref_lib:`) — point at a reference `.lib` and char reads the
+cell's output-pin functions straight from it and derives every arc, so **no `arc:` or
+`function:` lines are needed at all** (char still measures the values in SPICE; it only
+reads the cell's *structure* from the reference):
+
+```text
+cell:    sky130_fd_sc_hd__o2bb2a_2
+netlist: sky130_fd_sc_hd.spice
+slews:   0.05, 0.20
+loads:   0.002, 0.010
+vdd:     1.8
+ref_lib: sky130_fd_sc_hd__tt_025C_1v80.lib   # arcs derived from the cell's functions
+```
+
+So a `.charlib` over a netlist's cell list needs only `cell + netlist + grid +
+ref_lib` per cell — the arcs come from the PDK. (Sequential cells still use the
+`clock_pin`/`data_pin` setup/hold form.)
 
 **Sequential cells** (flip-flops) characterize the setup/hold constraints on the
 data pin and the CK->Q delay arc instead of combinational arcs:

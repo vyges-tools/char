@@ -103,3 +103,35 @@ fn rejects_garbage_function() {
     assert!(derive_arcs("Y", "A & ").is_err());
     assert!(derive_arcs("Y", "(A | B").is_err());
 }
+
+#[test]
+fn derives_arcs_from_a_reference_lib() {
+    use vyges_char::arcs::arcs_from_lib;
+    let lib = r#"
+library (ref) {
+  cell ("MYNAND") {
+    pin (A) { direction : input; capacitance : 0.001; }
+    pin (B) { direction : input; capacitance : 0.001; }
+    pin (Y) { direction : output; function : "!(A&B)"; }
+  }
+  cell ("MYBUF") {
+    pin (A) { direction : input; }
+    pin (X) { direction : output; function : "A"; }
+  }
+}
+"#;
+    let mut s: Vec<(String, String)> = arcs_from_lib(lib, "MYNAND")
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.in_pin, a.sense))
+        .collect();
+    s.sort();
+    assert_eq!(
+        s,
+        vec![("A".into(), "negative_unate".into()), ("B".into(), "negative_unate".into())]
+    );
+    // picks the right cell among several; buffer is positive-unate
+    assert_eq!(arcs_from_lib(lib, "MYBUF").unwrap()[0].sense, "positive_unate");
+    // missing cell errors
+    assert!(arcs_from_lib(lib, "NOPE").is_err());
+}

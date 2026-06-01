@@ -125,6 +125,7 @@ pub struct CharJob {
     pub set_active_low: bool,
     pub power_char: bool,     // characterize internal_power (per arc) + leakage_power (per state)
     pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
+    pub ref_lib: Option<String>, // reference .lib to auto-derive arcs from (read at load)
     pub base_dir: String,
 }
 
@@ -251,6 +252,8 @@ impl CharJob {
                 v.extend(derived);
             }
             v
+        } else if kv.contains_key("ref_lib") {
+            Vec::new() // deferred: load() reads the reference lib and derives arcs
         } else {
             vec![ArcSpec {
                 in_pin: get("in_pin")?,
@@ -261,7 +264,12 @@ impl CharJob {
         };
         let (in_pin, out_pin, sense) = match arcs.first() {
             Some(a) => (a.in_pin.clone(), a.out_pin.clone(), a.sense.clone()),
-            None => (kv.get("data_pin").cloned().unwrap_or_default(), get("out_pin")?, String::new()),
+            // seq jobs (data_pin/out_pin) and deferred ref_lib jobs (filled in load).
+            None => (
+                kv.get("data_pin").cloned().unwrap_or_default(),
+                kv.get("out_pin").cloned().unwrap_or_default(),
+                String::new(),
+            ),
         };
         let default_temp = kv.get("temp").and_then(|t| t.parse().ok()).unwrap_or(25.0);
         let corners: Vec<Corner> =
@@ -307,16 +315,44 @@ impl CharJob {
             set_active_low: active_low(&kv, "set_pin", "set_active"),
             power_char: kv.get("power_char").map(|s| s == "true" || s == "1").unwrap_or(false),
             corners,
+            ref_lib: kv.get("ref_lib").filter(|s| !s.is_empty()).cloned(),
             base_dir: base_dir.to_string(),
         };
-        job.validate()?;
+        // A ref_lib job defers arc derivation (and thus validation) to `load`,
+        // which reads the reference `.lib` from disk.
+        if job.ref_lib.is_none() {
+            job.validate()?;
+        }
         Ok(job)
     }
 
     pub fn load(path: &str) -> Result<CharJob, JobError> {
         let text = std::fs::read_to_string(path).map_err(|e| JobError(format!("{path}: {e}")))?;
         let base = Path::new(path).parent().and_then(|p| p.to_str()).unwrap_or(".");
-        CharJob::parse(&text, base)
+        let mut job = CharJob::parse(&text, base)?;
+        // Auto-derive arcs from a reference `.lib` (combinational cells): read the
+        // cell's output-pin functions and derive arcs, so no `arc:`/`function:`
+        // lines are needed — `char library` becomes netlist-driven.
+        if let Some(ref_lib) = job.ref_lib.clone() {
+            if !job.seq && job.arcs.is_empty() {
+                let resolved = if Path::new(&ref_lib).is_absolute() || job.base_dir.is_empty() {
+                    ref_lib.clone()
+                } else {
+                    Path::new(&job.base_dir).join(&ref_lib).to_string_lossy().into_owned()
+                };
+                let text = std::fs::read_to_string(&resolved)
+                    .map_err(|e| JobError(format!("{resolved}: {e}")))?;
+                job.arcs = crate::arcs::arcs_from_lib(&text, &job.cell)
+                    .map_err(|e| JobError(format!("ref_lib {ref_lib}: {e}")))?;
+                if let Some(a) = job.arcs.first() {
+                    job.in_pin = a.in_pin.clone();
+                    job.out_pin = a.out_pin.clone();
+                    job.sense = a.sense.clone();
+                }
+            }
+            job.validate()?;
+        }
+        Ok(job)
     }
 
     pub fn validate(&self) -> Result<(), JobError> {
