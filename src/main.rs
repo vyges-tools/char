@@ -33,12 +33,14 @@ flags:
   --bug-report     file a bug (central: vyges/community)
   --feature-request request a feature (central)
   --sponsor        sponsor Vyges (github.com/sponsors/vyges-ip)
+  --star           star this tool on GitHub ⭐
 ";
 
 const BUG_URL: &str =
     "https://github.com/vyges/community/issues/new?template=bug_report_template.yaml";
 const FEATURE_URL: &str = "https://github.com/vyges/community/issues/new?labels=enhancement";
 const SPONSOR_URL: &str = "https://github.com/sponsors/vyges-ip";
+const STAR_URL: &str = "https://github.com/vyges-tools/char";
 
 /// Print a labelled URL; if stdout is a terminal, also try to open it in a browser.
 /// In headless / agent contexts (not a TTY) it just prints the URL.
@@ -63,6 +65,7 @@ struct Cli {
     bug_report: bool,
     feature_request: bool,
     sponsor: bool,
+    star: bool,
 }
 
 fn parse_cli(args: &[String]) -> Cli {
@@ -82,6 +85,7 @@ fn parse_cli(args: &[String]) -> Cli {
             "--bug-report" => c.bug_report = true,
             "--feature-request" => c.feature_request = true,
             "--sponsor" => c.sponsor = true,
+            "--star" => c.star = true,
             other => c.positionals.push(other.to_string()),
         }
         i += 1;
@@ -163,6 +167,9 @@ fn main() {
     }
     if cli.sponsor {
         return link("Sponsor Vyges", SPONSOR_URL);
+    }
+    if cli.star {
+        return link("Star vyges-char on GitHub ⭐", STAR_URL);
     }
     if cli.version {
         println!("vyges-char {} ({})", vyges_char::VERSION, env!("VYGES_GIT_SHA"));
