@@ -132,6 +132,7 @@ fn main() {
 
     if cli.version {
         println!("vyges-char {}", vyges_char::VERSION);
+        println!("{}", vyges_char::COPYRIGHT);
         return;
     }
     let cmd = cli.positionals.first().cloned().unwrap_or_default();
