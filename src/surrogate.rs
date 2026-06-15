@@ -1,5 +1,5 @@
 //! A baseline **CPU-side surrogate** over a characterization grid: a small bivariate
-//! polynomial least-squares model (std-only, no external crate, no CUDA) that learns
+//! polynomial least-squares model (std-only, no external crate) that learns
 //! delay/transition/… as a smooth function of `(input_slew, output_load)`.
 //!
 //! The point is **sample-efficiency**: fit on a *subset* of the SPICE-measured grid,

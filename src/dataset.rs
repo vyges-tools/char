@@ -1,6 +1,6 @@
 //! Dataset export: flatten characterization results into a tidy, long-format table
 //! — one row per measured scalar — for analysis and as **training data for fast,
-//! CPU-side timing/power surrogate models** (the open, no-CUDA inner-loop direction).
+//! CPU-side timing/power surrogate models** (the open, fast inner-loop direction).
 //!
 //! Every characterized number (delay, transition, LVF sigma, internal energy, leakage,
 //! receiver cap, and the sequential setup/hold/CK->Q/recovery/removal points) becomes

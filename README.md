@@ -289,8 +289,8 @@ functions** of slew and load. So a natural question:
 > Do you have to simulate *every* grid point — or can you simulate a **subset** and
 > have a cheap model **predict the rest**, accurately enough for the fast inner loop?
 
-`vyges-char` ships two small, std-only tools to explore exactly this — **on an
-ordinary CPU, no GPU and no CUDA**:
+`vyges-char` ships two small, std-only tools to explore exactly this — in **pure Rust**
+(experiment with GPUs too via [rust-gpu](https://rust-gpu.github.io/)):
 
 - **`vyges-char dataset JOB`** — flattens a characterization into a tidy, long-format
   **table** (one row per measured point: cell, arc, metric, corner, the two grid axes,
@@ -323,8 +323,8 @@ Some directions to explore:
 
 ### Two cohorts, two purposes
 
-The engine is **open-source and runs locally** (std-only Rust + ngspice on a plain CPU — no
-GPU, no CUDA, **nothing leaves your machine**), which makes it useful to very different teams:
+The engine is **open-source and runs locally** (std-only Rust + ngspice on a plain CPU —
+experiment with GPUs too via [rust-gpu](https://rust-gpu.github.io/); **nothing leaves your machine**), which makes it useful to very different teams:
 
 - **University / OSS researchers** — a study in sample-efficiency and surrogate modeling on
   open PDKs (no agreement needed). Chase the questions above; publish and share.
