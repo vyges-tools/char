@@ -1,0 +1,13 @@
+# Characterize an inverter -> Liberty NLDM.
+# Run on the EDA host (needs ngspice + the sky130 device models):
+#   vyges-char run examples/inv.char -o inv.lib
+cell:    sky130_fd_sc_hd__inv_1
+netlist: inv.spice
+in_pin:  A
+out_pin: Y
+sense:   negative_unate
+slews:   0.01, 0.04, 0.16, 0.64
+loads:   0.0005, 0.002, 0.008, 0.032
+vdd:     1.8
+temp:    25
+models:  sky130.lib.spice

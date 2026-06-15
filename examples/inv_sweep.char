@@ -1,0 +1,17 @@
+# Denser sweep for the surrogate experiment (see examples/README.md).
+# A 7x7 LOG-SPACED slew x load grid — enough held-out points for a degree-2 surrogate
+# (a 4x4 grid only leaves room for degree 1).
+#
+# Edit `netlist` and `models` to point at YOUR PDK (this template uses sky130 names).
+# For sky130/most PDKs the corner deck uses relative .include paths, so RUN FROM the
+# PDK's libs.tech/ngspice/corners/ directory — surrogate-experiment.sh handles this.
+cell:    sky130_fd_sc_hd__inv_1
+netlist: sky130_fd_sc_hd.spice      # contains .subckt for the cell (point at your PDK)
+in_pin:  A
+out_pin: Y
+sense:   negative_unate
+slews:   0.01, 0.0230506, 0.0531329, 0.122474, 0.282311, 0.650743, 1.5                # ns, log-spaced
+loads:   0.0005, 0.00133517, 0.00356533, 0.00952062, 0.0254232, 0.0678883, 0.181284   # pF, log-spaced
+vdd:     1.8
+temp:    25
+models:  params.spice, corners/tt.spice   # device models, included in order

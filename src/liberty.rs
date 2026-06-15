@@ -1,0 +1,686 @@
+//! Liberty (`.lib`) NLDM emitter.
+//!
+//! Emits a `table_lookup` (NLDM) timing model: a `lu_table_template` over
+//! (input_net_transition, total_output_net_capacitance) plus per-arc
+//! `cell_rise` / `cell_fall` / `rise_transition` / `fall_transition` tables.
+//! Pure std — no simulator needed — so it is fully unit-tested offline.
+
+/// A 2-D NLDM table: values[i][j] indexed by (slew_i, load_j).
+#[derive(Debug, Clone)]
+pub struct Table {
+    pub values: Vec<Vec<f64>>,
+}
+
+impl Table {
+    pub fn new(rows: usize, cols: usize) -> Table {
+        Table { values: vec![vec![0.0; cols]; rows] }
+    }
+    /// True if any entry is non-zero — gates whether a sigma table is emitted.
+    pub fn any_nonzero(&self) -> bool {
+        self.values.iter().any(|r| r.iter().any(|&v| v != 0.0))
+    }
+}
+
+/// A CCS output-current waveform at one (slew, load) grid point: the driver's
+/// output current I(t) over time, plus the reference (input-crossing) time.
+#[derive(Debug, Clone)]
+pub struct Waveform {
+    pub slew: f64,
+    pub load: f64,
+    pub ref_time: f64,
+    pub time: Vec<f64>,    // ns
+    pub current: Vec<f64>, // mA
+}
+
+/// One timing arc (in_pin -> out_pin) with its four NLDM tables, optional LVF
+/// delay-sigma tables (Monte-Carlo over mismatch), optional CCS output-current
+/// waveforms, and optional CCS receiver-capacitance tables (input-pin model).
+/// Empty sigma -> no LVF; empty ccs -> no CCS; zero recv tables -> no receiver model.
+#[derive(Debug, Clone)]
+pub struct Arc {
+    pub cell: String,
+    pub in_pin: String,
+    pub out_pin: String,
+    pub sense: String,
+    pub cell_rise: Table,
+    pub cell_fall: Table,
+    pub rise_transition: Table,
+    pub fall_transition: Table,
+    pub sigma_rise: Table, // LVF: 1-sigma of cell_rise delay (ns)
+    pub sigma_fall: Table, // LVF: 1-sigma of cell_fall delay (ns)
+    pub ccs_rise: Vec<Waveform>, // CCS output_current_rise, one per (slew,load)
+    pub ccs_fall: Vec<Waveform>, // CCS output_current_fall
+    // CCS receiver capacitance on `in_pin` (pF): the two-segment input-pin load a
+    // driver sees. C1 = effective cap over the first half of the input transition
+    // (before the delay threshold, mostly static gate cap); C2 = over the second
+    // half (after the threshold, inflated by Miller from the switching output).
+    pub recv_c1_rise: Table,
+    pub recv_c2_rise: Table,
+    pub recv_c1_fall: Table,
+    pub recv_c2_fall: Table,
+    // Power. `int_rise`/`int_fall` are the internal switching energy (pJ) for this
+    // arc, indexed by (input transition, output load) — the dynamic power the load
+    // charging doesn't account for. `leakage` is the cell's per-input-state static
+    // leakage (when-expression, nW); it's cell-level, carried on every arc of the
+    // cell (the renderer reads it from the first). All empty/zero -> no power.
+    pub int_rise: Table,
+    pub int_fall: Table,
+    pub leakage: Vec<(String, f64)>,
+}
+
+impl Arc {
+    /// True if any receiver-capacitance segment was characterized.
+    pub fn has_recv(&self) -> bool {
+        self.recv_c1_rise.any_nonzero()
+            || self.recv_c2_rise.any_nonzero()
+            || self.recv_c1_fall.any_nonzero()
+            || self.recv_c2_fall.any_nonzero()
+    }
+
+    /// Conventional single-number input `capacitance` (pF): the mean static
+    /// (pre-switching) segment over the grid, i.e. the C1 lanes — what a NLDM-only
+    /// tool reads. The receiver_capacitance group carries the fuller C1/C2 split.
+    pub fn nominal_cap(&self) -> f64 {
+        let mean = |t: &Table| {
+            let (mut sum, mut n) = (0.0, 0usize);
+            for row in &t.values {
+                for &v in row {
+                    sum += v;
+                    n += 1;
+                }
+            }
+            if n == 0 { 0.0 } else { sum / n as f64 }
+        };
+        (mean(&self.recv_c1_rise) + mean(&self.recv_c1_fall)) / 2.0
+    }
+}
+
+/// A characterized sequential (flip-flop) cell: setup/hold constraints on the data
+/// pin vs the clock, plus the CK->Q delay arc. Setup/hold tables are indexed by
+/// (clock transition, data transition); the CK->Q arc by (clock transition, load).
+#[derive(Debug, Clone)]
+pub struct SeqCell {
+    pub cell: String,
+    pub clock_pin: String,
+    pub data_pin: String,
+    pub out_pin: String,
+    pub rising_edge: bool, // clocked on the rising (true) or falling edge
+    pub setup_rise: Table, // setup for a rising data edge
+    pub setup_fall: Table,
+    pub hold_rise: Table,
+    pub hold_fall: Table,
+    pub ckq_rise: Table,       // CK->Q delay, rising Q
+    pub ckq_fall: Table,       // CK->Q delay, falling Q
+    pub ckq_rise_trans: Table, // Q rise transition
+    pub ckq_fall_trans: Table, // Q fall transition
+    pub asyncs: Vec<AsyncCtl>, // async set/reset controls (empty -> plain D-flop)
+}
+
+/// An async set or reset control on a flop. `sets_high` distinguishes a set/preset
+/// (forces Q high) from a reset/clear (forces Q low); `expr` is the `ff` attribute
+/// value (e.g. "!RESET_B"). `q`/`q_trans` are the async->Q delay arc; `recovery` and
+/// `removal` are the de-assert-vs-clock constraints (clock × async transition).
+#[derive(Debug, Clone)]
+pub struct AsyncCtl {
+    pub pin: String,
+    pub expr: String,
+    pub sets_high: bool,
+    pub active_low: bool, // de-assert edge is rising (active-low) or falling
+    pub q: Table,
+    pub q_trans: Table,
+    pub recovery: Table,
+    pub removal: Table,
+}
+
+#[derive(Debug, Clone)]
+pub struct Units {
+    pub time: String,        // e.g. "1ns"
+    pub cap: String,         // e.g. "1pf"
+    pub voltage: String,     // e.g. "1V"
+    pub nom_voltage: f64,    // nominal supply for this corner (lib header)
+    pub nom_temp: f64,       // nominal temperature for this corner (lib header)
+}
+
+impl Default for Units {
+    fn default() -> Self {
+        Units {
+            time: "1ns".into(),
+            cap: "1pf".into(),
+            voltage: "1V".into(),
+            nom_voltage: 1.8,
+            nom_temp: 25.0,
+        }
+    }
+}
+
+fn fmt_index(vals: &[f64]) -> String {
+    vals.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", ")
+}
+
+fn fmt_csv(vals: &[f64]) -> String {
+    vals.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join(", ")
+}
+
+fn fmt_table(t: &Table, indent: &str) -> String {
+    let rows: Vec<String> = t
+        .values
+        .iter()
+        .map(|row| {
+            let cells = row.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join(", ");
+            format!("{indent}    \"{cells}\"")
+        })
+        .collect();
+    rows.join(", \\\n")
+}
+
+/// Machine-readable characterization summary (std-only, no deps).
+pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) -> String {
+    let arr = |v: &[f64]| {
+        v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",")
+    };
+    let table = |t: &Table| {
+        t.values
+            .iter()
+            .map(|row| format!("[{}]", arr(row)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut s = String::new();
+    s.push_str(&format!("{{\"library\":{library:?},"));
+    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str("\"arcs\":[");
+    for (i, a) in arcs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "{{\"cell\":{:?},\"in_pin\":{:?},\"out_pin\":{:?},\"sense\":{:?},",
+            a.cell, a.in_pin, a.out_pin, a.sense
+        ));
+        s.push_str(&format!("\"cell_rise\":[{}],", table(&a.cell_rise)));
+        s.push_str(&format!("\"cell_fall\":[{}],", table(&a.cell_fall)));
+        s.push_str(&format!("\"rise_transition\":[{}],", table(&a.rise_transition)));
+        s.push_str(&format!("\"fall_transition\":[{}]}}", table(&a.fall_transition)));
+    }
+    s.push_str("]}\n");
+    s
+}
+
+/// Library-level measurement thresholds — declared so a consumer interprets the
+/// tables at the points char actually measured: 50% for delay, 20–80% for slew
+/// (matching the foundry `.lib` convention). Without these OpenSTA errors with
+/// "missing one or more thresholds".
+const THRESHOLDS: &str = "\
+  slew_lower_threshold_pct_rise : 20.0;\n\
+  slew_upper_threshold_pct_rise : 80.0;\n\
+  slew_lower_threshold_pct_fall : 20.0;\n\
+  slew_upper_threshold_pct_fall : 80.0;\n\
+  input_threshold_pct_rise : 50.0;\n\
+  input_threshold_pct_fall : 50.0;\n\
+  output_threshold_pct_rise : 50.0;\n\
+  output_threshold_pct_fall : 50.0;\n\
+  slew_derate_from_library : 1.0;\n";
+
+/// The capacitive-load unit token (e.g. `pf`) — the alphabetic suffix of a unit
+/// string like `1pf`. (Liberty wants `capacitive_load_unit (1, pf);`, unquoted.)
+fn cap_unit(cap: &str) -> &str {
+    cap.trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == ' ')
+}
+
+/// Render a complete single-library `.lib` for the given arcs.
+pub fn render(
+    library: &str,
+    units: &Units,
+    slews: &[f64],
+    loads: &[f64],
+    arcs: &[Arc],
+) -> String {
+    let tmpl = "vyges_nldm";
+    let mut s = String::new();
+    s.push_str(&format!("library ({library}) {{\n"));
+    s.push_str("  delay_model : table_lookup;\n");
+    s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
+    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
+    s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
+    if arcs.iter().any(|a| !a.leakage.is_empty()) {
+        s.push_str("  leakage_power_unit : \"1nW\";\n");
+    }
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(THRESHOLDS);
+    s.push('\n');
+
+    // Lookup-table template shared by all arcs.
+    s.push_str(&format!("  lu_table_template ({tmpl}) {{\n"));
+    s.push_str("    variable_1 : input_net_transition;\n");
+    s.push_str("    variable_2 : total_output_net_capacitance;\n");
+    s.push_str(&format!("    index_1 (\"{}\");\n", fmt_index(slews)));
+    s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(loads)));
+    s.push_str("  }\n\n");
+
+    // CCS time-vector template (declared only if any arc carries current waveforms).
+    if arcs.iter().any(|a| !a.ccs_rise.is_empty() || !a.ccs_fall.is_empty()) {
+        s.push_str("  lu_table_template (ccs_tmpl) {\n");
+        s.push_str("    variable_1 : input_net_transition;\n");
+        s.push_str("    variable_2 : total_output_net_capacitance;\n");
+        s.push_str("    variable_3 : time;\n");
+        s.push_str("  }\n\n");
+    }
+
+    // Group arcs into cells (first-seen order). Each cell emits every input pin
+    // once (with its receiver model) and every output pin once, the latter carrying
+    // a `timing ()` group per arc that targets it — so a multi-input gate (A->Y,
+    // B->Y) or a multi-output cell (A->{Y,Z}) renders as one well-formed cell.
+    let mut cell_order: Vec<&str> = Vec::new();
+    for a in arcs {
+        if !cell_order.iter().any(|c| *c == a.cell) {
+            cell_order.push(&a.cell);
+        }
+    }
+    for cell in cell_order {
+        let cell_arcs: Vec<&Arc> = arcs.iter().filter(|a| a.cell == cell).collect();
+        s.push_str(&format!("  cell ({cell}) {{\n"));
+        // cell leakage: the average over the characterized states + a per-state group.
+        let leak = &cell_arcs[0].leakage;
+        if !leak.is_empty() {
+            let avg = leak.iter().map(|(_, v)| v).sum::<f64>() / leak.len() as f64;
+            s.push_str(&format!("    cell_leakage_power : {avg:.6};\n"));
+            for (when, v) in leak {
+                s.push_str("    leakage_power () {\n");
+                s.push_str(&format!("      when : \"{when}\";\n"));
+                s.push_str(&format!("      value : {v:.6};\n"));
+                s.push_str("    }\n");
+            }
+        }
+        // input pins, unique by name, first-seen
+        let mut seen_in: Vec<&str> = Vec::new();
+        for a in &cell_arcs {
+            if !seen_in.iter().any(|p| *p == a.in_pin) {
+                seen_in.push(&a.in_pin);
+                emit_input_pin(&mut s, a, tmpl, slews, loads);
+            }
+        }
+        // output pins, unique by name, first-seen; each gathers its timing arcs
+        let mut seen_out: Vec<&str> = Vec::new();
+        for a in &cell_arcs {
+            if seen_out.iter().any(|p| *p == a.out_pin) {
+                continue;
+            }
+            seen_out.push(&a.out_pin);
+            s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", a.out_pin));
+            for b in cell_arcs.iter().filter(|b| b.out_pin == a.out_pin) {
+                emit_timing(&mut s, b, tmpl, slews, loads);
+            }
+            s.push_str("    }\n");
+        }
+        s.push_str("  }\n");
+    }
+    s.push_str("}\n");
+    s
+}
+
+/// Emit one input `pin` group: bare `direction : input` unless receiver caps were
+/// characterized, in which case add the conventional `capacitance` + CCS receiver model.
+fn emit_input_pin(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f64]) {
+    if arc.has_recv() {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", arc.in_pin));
+        s.push_str(&format!("      capacitance : {:.6};\n", arc.nominal_cap()));
+        s.push_str("      receiver_capacitance () {\n");
+        for (name, t) in [
+            ("receiver_capacitance1_rise", &arc.recv_c1_rise),
+            ("receiver_capacitance1_fall", &arc.recv_c1_fall),
+            ("receiver_capacitance2_rise", &arc.recv_c2_rise),
+            ("receiver_capacitance2_fall", &arc.recv_c2_fall),
+        ] {
+            s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+            s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+            s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str("          values ( \\\n");
+            s.push_str(&fmt_table(t, "        "));
+            s.push_str(" );\n        }\n");
+        }
+        s.push_str("      }\n    }\n");
+    } else {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
+    }
+}
+
+/// Emit one `timing ()` arc group (NLDM tables + optional LVF sigma + CCS current).
+fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f64]) {
+    s.push_str("      timing () {\n");
+    s.push_str(&format!("        related_pin : \"{}\";\n", arc.in_pin));
+    s.push_str(&format!("        timing_sense : {};\n", arc.sense));
+    for (name, t) in [
+        ("cell_rise", &arc.cell_rise),
+        ("cell_fall", &arc.cell_fall),
+        ("rise_transition", &arc.rise_transition),
+        ("fall_transition", &arc.fall_transition),
+    ] {
+        s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+        s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+        s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+        s.push_str("          values ( \\\n");
+        s.push_str(&fmt_table(t, "        "));
+        s.push_str(" );\n        }\n");
+    }
+    // LVF: per-(slew,load) delay sigma tables, emitted only when characterized.
+    if arc.sigma_rise.any_nonzero() || arc.sigma_fall.any_nonzero() {
+        for (name, t) in
+            [("ocv_sigma_cell_rise", &arc.sigma_rise), ("ocv_sigma_cell_fall", &arc.sigma_fall)]
+        {
+            s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+            s.push_str("          sigma_type : \"early_and_late\";\n");
+            s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
+            s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str("          values ( \\\n");
+            s.push_str(&fmt_table(t, "        "));
+            s.push_str(" );\n        }\n");
+        }
+    }
+    // CCS: output-current waveforms (one `vector` per (slew,load) grid point).
+    for (group, wfs) in
+        [("output_current_rise", &arc.ccs_rise), ("output_current_fall", &arc.ccs_fall)]
+    {
+        if wfs.is_empty() {
+            continue;
+        }
+        s.push_str(&format!("        {group} () {{\n"));
+        for w in wfs {
+            s.push_str("          vector (ccs_tmpl) {\n");
+            s.push_str(&format!("            reference_time : {:.6};\n", w.ref_time));
+            s.push_str(&format!("            index_1 (\"{:.6}\");\n", w.slew));
+            s.push_str(&format!("            index_2 (\"{:.6}\");\n", w.load));
+            s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
+            s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
+            s.push_str("          }\n");
+        }
+        s.push_str("        }\n");
+    }
+    // internal switching power (rise/fall energy), emitted only when characterized.
+    if arc.int_rise.any_nonzero() || arc.int_fall.any_nonzero() {
+        s.push_str("        internal_power () {\n");
+        s.push_str(&format!("          related_pin : \"{}\";\n", arc.in_pin));
+        for (name, t) in [("rise_power", &arc.int_rise), ("fall_power", &arc.int_fall)] {
+            s.push_str(&format!("          {name} ({tmpl}) {{\n"));
+            s.push_str(&format!("            index_1 (\"{}\");\n", fmt_index(slews)));
+            s.push_str(&format!("            index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str("            values ( \\\n");
+            s.push_str(&fmt_table(t, "          "));
+            s.push_str(" );\n          }\n");
+        }
+        s.push_str("        }\n");
+    }
+    s.push_str("      }\n");
+}
+
+/// Render a single-library `.lib` for a characterized sequential cell: the `ff`
+/// group, the clock pin, the data pin's setup/hold constraint timing groups, and
+/// the Q pin's CK->Q delay arc. The constraint tables use a template over
+/// (related_pin / clock transition, constrained_pin / data transition); the CK->Q
+/// arc uses the usual (input_net_transition, total_output_net_capacitance) template.
+pub fn render_seq(
+    library: &str,
+    units: &Units,
+    slews: &[f64],
+    loads: &[f64],
+    cell: &SeqCell,
+) -> String {
+    let nldm = "vyges_nldm";
+    let cons = "vyges_constraint";
+    let mut s = String::new();
+    s.push_str(&format!("library ({library}) {{\n"));
+    s.push_str("  delay_model : table_lookup;\n");
+    s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
+    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
+    s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
+    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(THRESHOLDS);
+    s.push('\n');
+
+    // CK->Q delay template (slew x load) + constraint template (clk x data slew).
+    s.push_str(&format!("  lu_table_template ({nldm}) {{\n"));
+    s.push_str("    variable_1 : input_net_transition;\n");
+    s.push_str("    variable_2 : total_output_net_capacitance;\n");
+    s.push_str(&format!("    index_1 (\"{}\");\n", fmt_index(slews)));
+    s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(loads)));
+    s.push_str("  }\n\n");
+    s.push_str(&format!("  lu_table_template ({cons}) {{\n"));
+    s.push_str("    variable_1 : related_pin_transition;\n");
+    s.push_str("    variable_2 : constrained_pin_transition;\n");
+    s.push_str(&format!("    index_1 (\"{}\");\n", fmt_index(slews)));
+    s.push_str(&format!("    index_2 (\"{}\");\n", fmt_index(slews)));
+    s.push_str("  }\n\n");
+
+    let named = |s: &mut String, name: &str, tmpl: &str, i1: &[f64], i2: &[f64], t: &Table| {
+        s.push_str(&format!("        {name} ({tmpl}) {{\n"));
+        s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(i1)));
+        s.push_str(&format!("          index_2 (\"{}\");\n", fmt_index(i2)));
+        s.push_str("          values ( \\\n");
+        s.push_str(&fmt_table(t, "        "));
+        s.push_str(" );\n        }\n");
+    };
+
+    s.push_str(&format!("  cell ({}) {{\n", cell.cell));
+    let clocked = if cell.rising_edge {
+        cell.clock_pin.clone()
+    } else {
+        format!("!{}", cell.clock_pin)
+    };
+    s.push_str("    ff (IQ, IQN) {\n");
+    s.push_str(&format!("      next_state : \"{}\";\n", cell.data_pin));
+    s.push_str(&format!("      clocked_on : \"{clocked}\";\n"));
+    for a in &cell.asyncs {
+        let attr = if a.sets_high { "preset" } else { "clear" };
+        s.push_str(&format!("      {attr} : \"{}\";\n", a.expr));
+    }
+    s.push_str("    }\n");
+
+    // clock pin
+    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n      clock : true;\n    }}\n", cell.clock_pin));
+
+    // async set/reset pins
+    let edge = if cell.rising_edge { "rising" } else { "falling" };
+    for a in &cell.asyncs {
+        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", a.pin));
+        // recovery/removal constraints vs the clock (de-assert timing)
+        for (kind, t) in [("recovery", &a.recovery), ("removal", &a.removal)] {
+            if !t.any_nonzero() {
+                continue;
+            }
+            s.push_str("      timing () {\n");
+            s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
+            s.push_str(&format!("        timing_type : {kind}_{edge};\n"));
+            // constrain the async pin's de-assert edge: rising for active-low controls.
+            let cname = if a.active_low { "rise_constraint" } else { "fall_constraint" };
+            named(&mut s, cname, cons, slews, slews, t);
+            s.push_str("      }\n"); // close the recovery/removal timing() group
+        }
+        s.push_str("    }\n");
+    }
+
+    // data pin: setup + hold constraint groups (rise/fall constraints)
+    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", cell.data_pin));
+    for (ty, rise, fall) in [
+        (format!("setup_{edge}"), &cell.setup_rise, &cell.setup_fall),
+        (format!("hold_{edge}"), &cell.hold_rise, &cell.hold_fall),
+    ] {
+        s.push_str("      timing () {\n");
+        s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
+        s.push_str(&format!("        timing_type : {ty};\n"));
+        named(&mut s, "rise_constraint", cons, slews, slews, rise);
+        named(&mut s, "fall_constraint", cons, slews, slews, fall);
+        s.push_str("      }\n");
+    }
+    s.push_str("    }\n");
+
+    // Q pin: CK->Q delay arc (edge-triggered)
+    s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", cell.out_pin));
+    s.push_str("      timing () {\n");
+    s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
+    s.push_str(&format!("        timing_type : {edge}_edge;\n"));
+    named(&mut s, "cell_rise", nldm, slews, loads, &cell.ckq_rise);
+    named(&mut s, "cell_fall", nldm, slews, loads, &cell.ckq_fall);
+    named(&mut s, "rise_transition", nldm, slews, loads, &cell.ckq_rise_trans);
+    named(&mut s, "fall_transition", nldm, slews, loads, &cell.ckq_fall_trans);
+    s.push_str("      }\n");
+    // async control -> Q delay arc: set (preset) drives Q high, reset (clear) low.
+    for a in &cell.asyncs {
+        if !a.q.any_nonzero() {
+            continue;
+        }
+        let (ty, dly, tr) = if a.sets_high {
+            ("preset", "cell_rise", "rise_transition")
+        } else {
+            ("clear", "cell_fall", "fall_transition")
+        };
+        s.push_str("      timing () {\n");
+        s.push_str(&format!("        related_pin : \"{}\";\n", a.pin));
+        s.push_str(&format!("        timing_type : {ty};\n"));
+        s.push_str("        timing_sense : positive_unate;\n");
+        named(&mut s, dly, nldm, slews, loads, &a.q);
+        named(&mut s, tr, nldm, slews, loads, &a.q_trans);
+        s.push_str("      }\n");
+    }
+    s.push_str("    }\n");
+
+    s.push_str("  }\n}\n");
+    s
+}
+
+/// Machine-readable summary of a characterized sequential cell (std-only, no deps).
+pub fn render_seq_json(library: &str, slews: &[f64], loads: &[f64], cell: &SeqCell) -> String {
+    let arr = |v: &[f64]| v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",");
+    let table = |t: &Table| {
+        t.values.iter().map(|row| format!("[{}]", arr(row))).collect::<Vec<_>>().join(",")
+    };
+    let mut s = String::new();
+    s.push_str(&format!("{{\"library\":{library:?},\"cell\":{:?},", cell.cell));
+    s.push_str(&format!(
+        "\"clock_pin\":{:?},\"data_pin\":{:?},\"out_pin\":{:?},\"rising_edge\":{},",
+        cell.clock_pin, cell.data_pin, cell.out_pin, cell.rising_edge
+    ));
+    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str(&format!("\"setup_rise\":[{}],", table(&cell.setup_rise)));
+    s.push_str(&format!("\"setup_fall\":[{}],", table(&cell.setup_fall)));
+    s.push_str(&format!("\"hold_rise\":[{}],", table(&cell.hold_rise)));
+    s.push_str(&format!("\"hold_fall\":[{}],", table(&cell.hold_fall)));
+    s.push_str(&format!("\"ckq_rise\":[{}],", table(&cell.ckq_rise)));
+    s.push_str(&format!("\"ckq_fall\":[{}]}}\n", table(&cell.ckq_fall)));
+    s
+}
+
+// ---- library-scale merge ------------------------------------------------
+
+/// Library-level scalar attributes (delay_model, *_unit, nom_*) of a rendered
+/// `.lib`: the lines after `library (...) {` and before the first template/cell.
+fn header_attrs(lib: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_lib = false;
+    for line in lib.lines() {
+        let t = line.trim();
+        if !in_lib {
+            if t.starts_with("library (") {
+                in_lib = true;
+            }
+            continue;
+        }
+        if t.starts_with("lu_table_template") || t.starts_with("cell (") || t.starts_with("cell(") {
+            break;
+        }
+        if !t.is_empty() {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Extract every brace-balanced `keyword (name) { ... }` block from a `.lib`,
+/// returning `(name, block_text)` in source order. Used to lift templates and
+/// cell groups out of per-cell libraries for merging.
+fn extract_blocks(lib: &str, keyword: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = lib.lines().collect();
+    let kw_sp = format!("{keyword} (");
+    let kw_np = format!("{keyword}(");
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t.starts_with(&kw_sp) || t.starts_with(&kw_np) {
+            let name = t
+                .split('(')
+                .nth(1)
+                .and_then(|r| r.split(')').next())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let mut depth = 0i32;
+            let mut started = false;
+            let mut block = String::new();
+            let mut j = i;
+            while j < lines.len() {
+                block.push_str(lines[j]);
+                block.push('\n');
+                for c in lines[j].chars() {
+                    match c {
+                        '{' => {
+                            depth += 1;
+                            started = true;
+                        }
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                j += 1;
+                if started && depth <= 0 {
+                    break;
+                }
+            }
+            out.push((name, block.trim_end().to_string()));
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Merge several single-cell `.lib` strings (sharing a slew/load grid) into one
+/// library: a unioned header, the unique `lu_table_template`s (by name), and
+/// every cell group. The library-scale deliverable.
+pub fn merge_libraries(library: &str, libs: &[String]) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("library ({library}) {{\n"));
+    // union library-level attributes (first-seen order across inputs).
+    let mut attrs: Vec<String> = Vec::new();
+    for lib in libs {
+        for line in header_attrs(lib) {
+            if !attrs.iter().any(|a| a == &line) {
+                attrs.push(line);
+            }
+        }
+    }
+    for a in &attrs {
+        s.push_str("  ");
+        s.push_str(a);
+        s.push('\n');
+    }
+    s.push('\n');
+    // unique templates by name.
+    let mut seen = std::collections::BTreeSet::new();
+    for lib in libs {
+        for (name, block) in extract_blocks(lib, "lu_table_template") {
+            if seen.insert(name) {
+                s.push_str(&block);
+                s.push_str("\n\n");
+            }
+        }
+    }
+    // every cell group, in input (cell) order.
+    for lib in libs {
+        for (_n, block) in extract_blocks(lib, "cell") {
+            s.push_str(&block);
+            s.push_str("\n\n");
+        }
+    }
+    s.push_str("}\n");
+    s
+}

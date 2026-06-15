@@ -1,0 +1,613 @@
+//! SPICE deck generation + ngspice `.measure` output parsing.
+//!
+//! Deck generation and parsing are pure std (unit-tested). The actual sim run
+//! lives in `engine` and shells out to `ngspice`.
+
+use std::collections::HashMap;
+
+/// Liberty `index_1` (input_net_transition) is the input edge measured between the
+/// slew thresholds — sky130/gf180 use 20%–80%, a 0.6 fraction of the full swing. A
+/// linear PWL ramped full-swing over `t` has a 20–80% transition of `0.6·t`, so to
+/// make the *measured* input transition equal the table's `slew` index, the ramp must
+/// span `slew / SLEW_FRAC` full-swing. (Driving full-swing over `slew` directly — the
+/// pre-correlation behaviour — made every input ~1.67× too steep, biasing delays and
+/// transitions low; see the foundry .lib correlation.)
+pub const SLEW_FRAC: f64 = 0.6;
+
+/// Full-swing ramp time (ns) whose threshold-to-threshold transition equals `slew_ns`.
+fn ramp_ns(slew_ns: f64) -> f64 {
+    slew_ns / SLEW_FRAC
+}
+
+/// Build a transient deck that drives `in_pin` with a ramp of `slew_ns` and
+/// loads `out_pin` with `load_pf`, measuring propagation delay + output slew.
+/// `subckt_call` is the instance line for the cell-under-test (caller wires
+/// the pin order); `includes` are model/netlist `.include` lines.
+#[allow(clippy::too_many_arguments)]
+pub fn deck(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+    out_rises: bool,
+    mc: Option<u64>,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let half = vdd / 2.0;
+    let mut s = String::new();
+    s.push_str(&format!("* {title}\n"));
+    // OSDI device models (e.g. PSP103 / HICUM via OpenVAF) must be registered
+    // before the netlist's `.model` cards are parsed — `pre_osdi` in a leading
+    // control block does that; the Monte-Carlo RNG seed is set in the same block
+    // (`set rndseed`) so each mismatch sample is independent. Needed for PDKs whose
+    // devices are Verilog-A/OSDI (IHP sg13g2, mixed-signal/BCD); empty otherwise.
+    if !osdi.is_empty() || mc.is_some() {
+        s.push_str(".control\n");
+        for o in osdi {
+            // ngspice `pre_osdi` takes the rest of the line as the path literally —
+            // quotes would become part of the filename, so emit it unquoted.
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        if let Some(seed) = mc {
+            s.push_str(&format!("set rndseed={seed}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    // LVF Monte-Carlo: enable device mismatch (sky130/gf180 convention) so the
+    // model's agauss/mismatch terms vary per seeded run. Emitted AFTER the includes
+    // so it overrides any `mc_mm_switch=0` a PDK params file sets (last .param wins).
+    if mc.is_some() {
+        s.push_str(".param mc_mm_switch=1\n");
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    // PWL input ramp: flat, then ramp over slew_ns starting at 1ns.
+    s.push_str(&format!(
+        "VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n",
+        1.0 + ramp_ns(slew_ns)
+    ));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
+    s.push_str(".tran 1p 20n\n");
+    let in_dir = if rising_input { "RISE=1" } else { "FALL=1" };
+    // Output edge is set by the arc's unateness, not by the input: a negative-unate
+    // (inverting) arc's output moves opposite the input; a positive-unate (buffer/
+    // and/or) arc's output moves with it. `out_rises` carries that decision.
+    let out_dir = if out_rises { "RISE=1" } else { "FALL=1" };
+    s.push_str(&format!(
+        ".measure tran prop_delay TRIG v({in_pin}) VAL={half} {in_dir} \
+         TARG v({out_pin}) VAL={half} {out_dir}\n"
+    ));
+    // output transition 20%-80% (rising) or 80%-20% (falling)
+    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
+    if out_rises {
+        s.push_str(&format!(
+            ".measure tran out_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
+             TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran out_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
+        ));
+    }
+    s.push_str(".end\n");
+    s
+}
+
+/// Build a CCS-capture deck: same drive as `deck`, but a 0 V sense source in
+/// series with the load lets the transient write the **output current waveform**
+/// i(Vsns) to `dat_path` (via `wrdata`, columns: time, current). The tran runs in
+/// a control block (with any OSDI pre-load) so the current vector is dumped.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_ccs(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+    dat_path: &str,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (CCS current capture)\n"));
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    // 0 V sense source between the driver output and the load cap -> i(Vsns) is the
+    // driver's output current.
+    s.push_str(&format!("Vsns {out_pin} {out_pin}_c 0\n"));
+    s.push_str(&format!("CL {out_pin}_c 0 {load_pf}p\n"));
+    s.push_str(".control\n");
+    for o in osdi {
+        s.push_str(&format!("pre_osdi {o}\n"));
+    }
+    // Capture tightly around the switching window (the input ramps 1n..1n+slew):
+    // a fine step over [0.9n, 1n+slew+settle] resolves the ~tens-of-ps current
+    // spike that a coarse 0..5n sweep would alias away.
+    let tstop = 1.0 + ramp_ns(slew_ns) + 1.5;
+    s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
+    s.push_str(&format!("wrdata {dat_path} i(Vsns)\n"));
+    s.push_str(".endc\n");
+    s.push_str(".end\n");
+    s
+}
+
+/// Build a receiver-capacitance deck: the input `in_pin` is driven through a 0 V
+/// sense source, so `i(Vsin)` is the **current into the input pin**; the output is
+/// loaded (so the output switches and Miller current is captured). The transient
+/// dumps the input current over the ramp window to `dat_path`. The engine integrates
+/// it into the two CCS receiver segments (C1 before / C2 after the 50% threshold).
+#[allow(clippy::too_many_arguments)]
+pub fn deck_recv(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+    dat_path: &str,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (CCS receiver-cap capture)\n"));
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    // Drive a source node; a 0 V sense source carries all the input-pin current.
+    s.push_str(&format!("VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(&format!("Vsin in_src {in_pin} 0\n"));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
+    s.push_str(".control\n");
+    for o in osdi {
+        s.push_str(&format!("pre_osdi {o}\n"));
+    }
+    // Capture the full input ramp [1n, 1n+slew] plus a little settle, finely enough
+    // to integrate the input current into the two receiver segments.
+    let tstop = 1.0 + ramp_ns(slew_ns) + 1.0;
+    s.push_str(&format!("tran 0.5p {tstop}n 0.9n\n"));
+    s.push_str(&format!("wrdata {dat_path} i(Vsin)\n"));
+    s.push_str(".endc\n");
+    s.push_str(".end\n");
+    s
+}
+
+/// Build an internal-power deck: same drive as `deck` (input ramp + output load),
+/// but integrates the VDD supply current over the switching window (`qvdd` =
+/// ∫i(VVDD)dt, Coulombs). The engine turns that into switching energy
+/// (VDD·|qvdd|) minus the load-charging part to get the internal energy.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_power_arc(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    in_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    slew_ns: f64,
+    load_pf: f64,
+    rising_input: bool,
+) -> String {
+    let (v0, v1) = if rising_input { (0.0, vdd) } else { (vdd, 0.0) };
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (internal power)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
+    let tstop = 1.0 + ramp_ns(slew_ns) + 4.0;
+    s.push_str(&format!(".tran 1p {tstop}n\n"));
+    s.push_str(&format!(".measure tran qvdd INTEG i(VVDD) FROM=0.9n TO={tstop}n\n"));
+    s.push_str(".end\n");
+    s
+}
+
+/// Build a leakage deck: all inputs held at a fixed state (the `subckt_call` wires
+/// the source lines), output open, settle, and read the quiescent VDD current at
+/// the end. The engine turns `ileak` into static leakage power (|ileak|·VDD).
+pub fn deck_leakage(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    vdd: f64,
+) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (leakage)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
+    s.push_str("VVSS VSS 0 0\n");
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(".tran 10p 5n\n");
+    s.push_str(".measure tran ileak FIND i(VVDD) AT=4.9n\n");
+    s.push_str(".end\n");
+    s
+}
+
+/// Build a PWL source body `PWL(0 v0 t .. )` from an initial level and a list of
+/// `(t50_ns, target_V)` edges, each ramping over `slew_ns` centred on `t50`.
+fn pwl(init: f64, slew: f64, edges: &[(f64, f64)]) -> String {
+    let mut s = format!("PWL(0 {init}");
+    let mut prev = init;
+    for &(t50, v) in edges {
+        let (t0, t1) = (t50 - slew / 2.0, t50 + slew / 2.0);
+        s.push_str(&format!(" {t0}n {prev} {t1}n {v}"));
+        prev = v;
+    }
+    s.push(')');
+    s
+}
+
+/// Build a sequential-constraint deck for a flip-flop. The clock gets a **prime**
+/// edge (50% at 2 ns) that latches the initial data, then a **capture** edge (50%
+/// at 8 ns); the data transitions per `data_edges` (50% times in ns) around the
+/// capture edge. Measures the CK->Q delay at the capture edge (`q_meas_rise` picks
+/// the Q direction) and the Q output transition. A failed capture leaves `ckq`
+/// unmeasured (the caller treats a missing measure as a capture failure).
+#[allow(clippy::too_many_arguments)]
+pub fn deck_seq(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    clock_pin: &str,
+    data_pin: &str,
+    out_pin: &str,
+    vdd: f64,
+    clk_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    data_init: f64,
+    data_slew: f64,
+    data_edges: &[(f64, f64)],
+    q_meas_rise: bool,
+    ties: &[(String, bool)],
+) -> String {
+    let half = vdd / 2.0;
+    let cs = clk_slew;
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (sequential constraint)\n"));
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    // Every ideal source drives the flop through a small series resistor. A bare
+    // voltage source onto a flip-flop's high-impedance storage/feedback nodes makes
+    // the source branch current stiff, and ngspice's transient collapses the
+    // timestep to ~0 at the data edge ("timestep too small; trouble with V…#branch").
+    // A ~1 Ω series R (negligible RC against the fF gate load) de-stiffens it.
+    s.push_str(&format!("VVDD vdd_s 0 {vdd}\nRVDD vdd_s VDD 0.01\n"));
+    s.push_str("VVSS vss_s 0 0\nRVSS vss_s VSS 0.01\n");
+    // Clock: prime edge (50% @ 2ns) then capture edge (50% @ 8ns). For a rising-edge
+    // flop both are rising (idle low); for a falling-edge flop both fall (idle high).
+    let ck_pwl = if rising_clock {
+        pwl(0.0, cs, &[(2.0, vdd), (4.0, 0.0), (8.0, vdd)])
+    } else {
+        pwl(vdd, cs, &[(2.0, 0.0), (4.0, vdd), (8.0, 0.0)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(data_init, data_slew, data_edges)));
+    // async controls (set/reset) held inactive at their declared levels, also through R.
+    s.push_str(&tie_sources(ties, vdd));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    // capture at 8 ns; hold release can sit up to ~3 ns later -> run to 12 ns.
+    s.push_str(".tran 2p 12n\n");
+    // capture is the 2nd clock edge of its direction.
+    let ck_dir = if rising_clock { "RISE=2" } else { "FALL=2" };
+    let q_dir = if q_meas_rise { "RISE=1" } else { "FALL=1" };
+    s.push_str(&format!(
+        ".measure tran ckq TRIG v({clock_pin}) VAL={half} {ck_dir} \
+         TARG v({out_pin}) VAL={half} {q_dir}\n"
+    ));
+    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
+    if q_meas_rise {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
+             TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
+        ));
+    }
+    s.push_str(".end\n");
+    s
+}
+
+/// Fixed sources holding async/unused pins at their declared inactive level, each
+/// through a 1 Ω series R (same de-stiffening as the clock/data sources).
+fn tie_sources(ties: &[(String, bool)], vdd: f64) -> String {
+    let mut s = String::new();
+    for (i, (pin, high)) in ties.iter().enumerate() {
+        let v = if *high { vdd } else { 0.0 };
+        s.push_str(&format!("Vtie{i} t{i}s 0 {v}\nRtie{i} t{i}s {pin} 1\n"));
+    }
+    s
+}
+
+/// Build an async control->Q delay deck. Primes Q to the *opposite* of what the
+/// async control will force (so the assertion makes Q move), then asserts the async
+/// pin (inactive->active, 50% @ 6 ns) and measures control->Q. `sets_high` picks the
+/// direction: a **set/preset** drives Q high (prime Q=0, measure Q rise); a
+/// **reset/clear** drives Q low (prime Q=1, measure Q fall). Other async pins tied.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_async_q(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    clock_pin: &str,
+    data_pin: &str,
+    out_pin: &str,
+    async_pin: &str,
+    vdd: f64,
+    clk_slew: f64,
+    async_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    active_low: bool,
+    sets_high: bool,
+    ties: &[(String, bool)],
+) -> String {
+    let half = vdd / 2.0;
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (async control->Q delay)\n"));
+    deck_preamble(&mut s, osdi, includes, vdd);
+    // prime Q to the opposite rail so the assertion moves it: set primes Q=0, reset Q=1.
+    let prime = if sets_high { 0.0 } else { vdd };
+    let ck_pwl = if rising_clock {
+        pwl(0.0, clk_slew, &[(2.0, vdd), (4.0, 0.0)])
+    } else {
+        pwl(vdd, clk_slew, &[(2.0, 0.0), (4.0, vdd)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(prime, clk_slew, &[])));
+    let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
+    s.push_str(&format!(
+        "VASY asys 0 {}\nRASY asys {async_pin} 1\n",
+        pwl(inactive, async_slew, &[(6.0, active)])
+    ));
+    s.push_str(&tie_sources(ties, vdd));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    s.push_str(".tran 2p 8n\n");
+    // assertion edge direction; Q moves toward set/reset rail.
+    let a_dir = if active_low { "FALL=1" } else { "RISE=1" };
+    let q_dir = if sets_high { "RISE=1" } else { "FALL=1" };
+    s.push_str(&format!(
+        ".measure tran aq TRIG v({async_pin}) VAL={half} {a_dir} \
+         TARG v({out_pin}) VAL={half} {q_dir}\n"
+    ));
+    let (lo, hi) = (0.2 * vdd, 0.8 * vdd);
+    if sets_high {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={lo} RISE=1 \
+             TARG v({out_pin}) VAL={hi} RISE=1\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            ".measure tran q_slew TRIG v({out_pin}) VAL={hi} FALL=1 \
+             TARG v({out_pin}) VAL={lo} FALL=1\n"
+        ));
+    }
+    s.push_str(".end\n");
+    s
+}
+
+/// Build an async recovery/removal deck. The async control is **asserted from the
+/// start** (forcing Q to its set/reset value), then **released** (active->inactive)
+/// at `release_50` ns; the data is held at the value a clean capture would latch
+/// (the opposite of the async-forced value), and a single clock edge fires at 8 ns.
+/// The settled Q (`qfinal` at 10.5 ns) tells whether the clock captured the data
+/// (release far enough before the internal sampling instant) or the async value
+/// held — the engine bisects `release_50` for that boundary. Sources go through the
+/// same series Rs as `deck_seq` so the release edge converges.
+#[allow(clippy::too_many_arguments)]
+pub fn deck_async_constraint(
+    title: &str,
+    includes: &[String],
+    osdi: &[String],
+    subckt_call: &str,
+    clock_pin: &str,
+    data_pin: &str,
+    out_pin: &str,
+    async_pin: &str,
+    vdd: f64,
+    clk_slew: f64,
+    async_slew: f64,
+    q_load: f64,
+    rising_clock: bool,
+    active_low: bool,
+    sets_high: bool,
+    release_50: f64,
+    ties: &[(String, bool)],
+) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("* {title} (async recovery/removal)\n"));
+    deck_preamble(&mut s, osdi, includes, vdd);
+    let ck_pwl = if rising_clock {
+        pwl(0.0, clk_slew, &[(8.0, vdd)])
+    } else {
+        pwl(vdd, clk_slew, &[(8.0, 0.0)])
+    };
+    s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
+    // capture value = opposite of the async-forced value, so a capture is visible.
+    let cap = if sets_high { 0.0 } else { vdd };
+    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(cap, clk_slew, &[])));
+    // async asserted from t=0, released (active->inactive) at release_50.
+    let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
+    s.push_str(&format!(
+        "VASY asys 0 {}\nRASY asys {async_pin} 1\n",
+        pwl(active, async_slew, &[(release_50, inactive)])
+    ));
+    s.push_str(&tie_sources(ties, vdd));
+    s.push_str(subckt_call);
+    if !subckt_call.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
+    s.push_str(".tran 2p 11n\n");
+    s.push_str(&format!(".measure tran qfinal FIND v({out_pin}) AT=10.5n\n"));
+    s.push_str(".end\n");
+    s
+}
+
+/// Common deck preamble: OSDI control block, includes, and series-R'd supplies.
+fn deck_preamble(s: &mut String, osdi: &[String], includes: &[String], vdd: f64) {
+    if !osdi.is_empty() {
+        s.push_str(".control\n");
+        for o in osdi {
+            s.push_str(&format!("pre_osdi {o}\n"));
+        }
+        s.push_str(".endc\n");
+    }
+    for inc in includes {
+        s.push_str(&format!(".include \"{inc}\"\n"));
+    }
+    s.push_str(&format!("VVDD vdd_s 0 {vdd}\nRVDD vdd_s VDD 0.01\n"));
+    s.push_str("VVSS vss_s 0 0\nRVSS vss_s VSS 0.01\n");
+}
+
+/// Parse a `wrdata` 2-column dump (time, value) into samples.
+pub fn parse_wrdata(text: &str) -> Vec<(f64, f64)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let t = it.next()?.parse::<f64>().ok()?;
+            let v = it.next()?.parse::<f64>().ok()?;
+            Some((t, v))
+        })
+        .collect()
+}
+
+/// Find a cell's port list from its `.subckt` definition in a netlist.
+///
+/// Returns the pin names in declared order (e.g. sky130's
+/// `A VGND VNB VPB VPWR Y`), folding `+` continuation lines. Case-insensitive
+/// match on the cell name. `None` if the cell has no `.subckt` here.
+pub fn parse_subckt_pins(netlist: &str, cell: &str) -> Option<Vec<String>> {
+    let lines: Vec<&str> = netlist.lines().collect();
+    for (i, raw) in lines.iter().enumerate() {
+        let line = raw.trim();
+        let mut toks = line.split_whitespace();
+        let Some(kw) = toks.next() else { continue }; // skip blank lines
+        if !kw.eq_ignore_ascii_case(".subckt") {
+            continue;
+        }
+        let Some(name) = toks.next() else { continue };
+        if !name.eq_ignore_ascii_case(cell) {
+            continue;
+        }
+        let mut pins: Vec<String> = toks.map(|s| s.to_string()).collect();
+        // fold `+` continuation lines
+        for cont in &lines[i + 1..] {
+            let c = cont.trim();
+            if let Some(rest) = c.strip_prefix('+') {
+                pins.extend(rest.split_whitespace().map(|s| s.to_string()));
+            } else {
+                break;
+            }
+        }
+        // a parameterized subckt may carry `name=value` tails — drop them
+        pins.retain(|p| !p.contains('='));
+        return Some(pins);
+    }
+    None
+}
+
+/// Parse ngspice `.measure` results from stdout/log.
+/// Lines look like: `prop_delay           =  1.234560e-10 targ= ...`
+pub fn parse_measures(output: &str) -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some((lhs, rhs)) = line.split_once('=') {
+            let name = lhs.trim();
+            if name.is_empty() || name.contains(char::is_whitespace) {
+                continue;
+            }
+            // value is the first token after '='
+            if let Some(tok) = rhs.split_whitespace().next() {
+                if let Ok(v) = tok.parse::<f64>() {
+                    out.insert(name.to_string(), v);
+                }
+            }
+        }
+    }
+    out
+}
