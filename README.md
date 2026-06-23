@@ -339,6 +339,19 @@ experiment with GPUs too via [rust-gpu](https://rust-gpu.github.io/); **nothing 
 node X", or a conversation about your team's flow. Start at **<https://vyges.com/contact>**.
 Findings from either cohort may shape where this goes.
 
+## Domain coverage
+
+`vyges-char` operates on the **standard-cell digital abstraction** — it produces **Liberty
+standard-cell timing models** (NLDM/CCS): per-arc delay and transition tables swept over input
+slew × output load, plus sequential setup/hold constraints. That makes it a **digital sign-off**
+engine: it characterizes the discrete, characterizable cells a digital library is built from. It
+does **not** apply to analog / mixed-signal blocks — their continuous behavior has no
+standard-cell or Liberty-arc analogue, so there are no timing arcs to sweep. For analog /
+mixed-signal physical and integrity coverage, reach for the analog-capable Vyges engines —
+[`lvs`](https://github.com/vyges-tools/lvs), [`layout`](https://github.com/vyges-tools/layout),
+[`em-ir`](https://github.com/vyges-tools/em-ir), [`thermal`](https://github.com/vyges-tools/thermal),
+and [`extract`](https://github.com/vyges-tools/extract).
+
 ## Open core, certified fab plugins
 
 `vyges-char` is open and contains **no foundry-confidential data**. It runs out
