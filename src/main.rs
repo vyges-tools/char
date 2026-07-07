@@ -407,6 +407,48 @@ fn trunc(s: &str, n: usize) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--describe") {
+        // Machine-readable description of `run` for tooling that drives it.
+        const DESCRIBE: &str = r#"{
+  "name": "char",
+  "summary": "standard-cell timing characterization (SPICE -> Liberty)",
+  "invocation": {
+    "args_template": ["run", "{job}"],
+    "optional": [
+      { "arg": "out", "flag": "-o" },
+      { "arg": "jobs", "flag": "--jobs" },
+      { "arg": "sparse", "flag": "--sparse" },
+      { "arg": "verify", "flag": "--verify" },
+      { "arg": "auto", "flag": "--auto" },
+      { "arg": "target", "flag": "--target" },
+      { "arg": "max_points", "flag": "--max-points" },
+      { "arg": "seed", "flag": "--seed" },
+      { "arg": "degree", "flag": "--degree" }
+    ],
+    "emits_json": true
+  },
+  "inputs": {
+    "type": "object",
+    "required": ["job"],
+    "properties": {
+      "job": { "type": "string", "description": "path to the characterization job file (JOB)" },
+      "out": { "type": "string", "description": "write output to FILE instead of stdout" },
+      "jobs": { "type": "string", "description": "parallelize the per-point ngspice sweep across N threads (N or 'auto')" },
+      "sparse": { "type": "string", "description": "simulate only a coarse RxC grid, surrogate-fill the dense .lib" },
+      "verify": { "type": "string", "description": "with --sparse: re-simulate K un-fitted points, report the real error" },
+      "auto": { "type": "boolean", "description": "self-tuning active sampling to a target accuracy, then surrogate-fill" },
+      "target": { "type": "string", "description": "with --auto: stop when LOO-CV error <= PCT% of peak (default 2.0)" },
+      "max_points": { "type": "string", "description": "with --auto: cap simulated points (default: the full grid)" },
+      "seed": { "type": "string", "description": "with --auto: initial seed grid (default 3x3)" },
+      "degree": { "type": "string", "description": "surrogate polynomial degree per axis, used with --sparse or --auto (default 2)" }
+    }
+  },
+  "artifacts": []
+}
+"#;
+        print!("{DESCRIBE}");
+        return;
+    }
     let cli = parse_cli(&args);
 
     if cli.bug_report {
