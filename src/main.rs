@@ -443,7 +443,8 @@ fn main() {
       "degree": { "type": "string", "description": "surrogate polynomial degree per axis, used with --sparse or --auto (default 2)" }
     }
   },
-  "artifacts": [ { "role": "liberty", "from_arg": "out" } ]
+  "artifacts": [ { "role": "liberty", "from_arg": "out" } ],
+  "consumes": ["spice"]
 }
 "#;
         print!("{DESCRIBE}");
