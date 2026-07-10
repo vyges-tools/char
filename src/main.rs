@@ -54,6 +54,7 @@ flags:
   --seed RxC       run --auto: initial seed grid (default 3x3)
   -q, --quiet      suppress non-essential output
   -v, --verbose    extra detail on stderr
+  --describe       print a machine-readable JSON description of the command
   -h, --help       show this help
   -V, --version    show version
   --bug-report     file a bug (central: vyges/community)
