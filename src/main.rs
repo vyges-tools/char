@@ -436,6 +436,10 @@ fn main() {
         const DESCRIBE: &str = r#"{
   "name": "char",
   "summary": "standard-cell timing characterization (SPICE -> Liberty)",
+  "maturity": "structured",
+  "provenance_limitations": [
+      "The job names the SPICE decks; input_hash covers the job path and arguments, not their contents, and `.include` chains are not followed."
+  ],
   "invocation": {
     "args_template": ["run", "{job}"],
     "optional": [
