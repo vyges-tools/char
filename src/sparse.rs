@@ -53,8 +53,12 @@ impl ArcModels {
     /// Predict the full dense grid → the four NLDM tables `[slew][load]`.
     pub fn fill(&self, slews: &[f64], loads: &[f64]) -> (Table, Table, Table, Table) {
         let (ns, nl) = (slews.len(), loads.len());
-        let (mut cr, mut cf, mut rt, mut ft) =
-            (Table::new(ns, nl), Table::new(ns, nl), Table::new(ns, nl), Table::new(ns, nl));
+        let (mut cr, mut cf, mut rt, mut ft) = (
+            Table::new(ns, nl),
+            Table::new(ns, nl),
+            Table::new(ns, nl),
+            Table::new(ns, nl),
+        );
         for (i, &s) in slews.iter().enumerate() {
             for (j, &l) in loads.iter().enumerate() {
                 let (a, b, c, d) = self.predict(s, l);
@@ -73,8 +77,12 @@ impl ArcModels {
 /// of how well the current sample predicts unseen points. Drives the active-sampling stop.
 /// Returns `f64::INFINITY` if it can't be computed (too few points for any fold).
 pub fn loo_cv_rms_pct(sim: &[ArcPoint], degree: usize) -> f64 {
-    let metrics: [fn(&ArcPoint) -> f64; 4] =
-        [|p| p.cell_rise, |p| p.cell_fall, |p| p.rise_transition, |p| p.fall_transition];
+    let metrics: [fn(&ArcPoint) -> f64; 4] = [
+        |p| p.cell_rise,
+        |p| p.cell_fall,
+        |p| p.rise_transition,
+        |p| p.fall_transition,
+    ];
     metrics
         .iter()
         .map(|f| loo_one(sim, *f, degree))
@@ -87,8 +95,12 @@ fn loo_one(sim: &[ArcPoint], f: fn(&ArcPoint) -> f64, degree: usize) -> f64 {
     let scale = pts.iter().map(|&(_, _, v)| v.abs()).fold(0.0f64, f64::max);
     let (mut sumsq, mut n) = (0.0f64, 0usize);
     for k in 0..pts.len() {
-        let rest: Vec<(f64, f64, f64)> =
-            pts.iter().enumerate().filter(|&(i, _)| i != k).map(|(_, &p)| p).collect();
+        let rest: Vec<(f64, f64, f64)> = pts
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != k)
+            .map(|(_, &p)| p)
+            .collect();
         if let Some(m) = Model::fit(&rest, degree, true) {
             let e = (m.predict(pts[k].0, pts[k].1) - pts[k].2).abs();
             sumsq += e * e;
@@ -114,7 +126,10 @@ pub fn maximin_next(sampled: &[(f64, f64)], candidates: &[(f64, f64)]) -> Option
     candidates
         .iter()
         .map(|&c| {
-            let nearest = sampled.iter().map(|&s| logd(c, s)).fold(f64::INFINITY, f64::min);
+            let nearest = sampled
+                .iter()
+                .map(|&s| logd(c, s))
+                .fold(f64::INFINITY, f64::min);
             (c, nearest)
         })
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
@@ -124,8 +139,18 @@ pub fn maximin_next(sampled: &[(f64, f64)], candidates: &[(f64, f64)]) -> Option
 /// Fit one surrogate on `(x, y, value)` points and predict the `xs × ys` grid → a Table.
 /// `log` selects log-log space (use `false` for metrics that can be negative, e.g. a
 /// flop's hold or recovery). Returns `None` if the fit can't be determined.
-pub fn fill_one(points: &[(f64, f64, f64)], xs: &[f64], ys: &[f64], degree: usize, log: bool) -> Option<Table> {
-    let finite: Vec<(f64, f64, f64)> = points.iter().copied().filter(|&(_, _, v)| v.is_finite()).collect();
+pub fn fill_one(
+    points: &[(f64, f64, f64)],
+    xs: &[f64],
+    ys: &[f64],
+    degree: usize,
+    log: bool,
+) -> Option<Table> {
+    let finite: Vec<(f64, f64, f64)> = points
+        .iter()
+        .copied()
+        .filter(|&(_, _, v)| v.is_finite())
+        .collect();
     let m = Model::fit(&finite, degree, log)?;
     let mut t = Table::new(xs.len(), ys.len());
     for (i, &x) in xs.iter().enumerate() {

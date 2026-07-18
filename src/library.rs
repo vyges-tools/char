@@ -63,10 +63,14 @@ impl LibraryJob {
             match k.as_str() {
                 "library" => library = v,
                 "threads" => {
-                    threads = v.parse().map_err(|_| LibraryError(format!("bad threads: {v:?}")))?
+                    threads = v
+                        .parse()
+                        .map_err(|_| LibraryError(format!("bad threads: {v:?}")))?
                 }
                 "jobs" => jobs.extend(
-                    v.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+                    v.split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty()),
                 ),
                 "jobs_dir" => jobs_dir = Some(v),
                 other => return Err(LibraryError(format!("unknown key: {other}"))),
@@ -92,14 +96,25 @@ impl LibraryJob {
             return Err(LibraryError("no jobs (set `jobs:` or `jobs_dir:`)".into()));
         }
         if threads == 0 {
-            threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+            threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
         }
-        Ok(LibraryJob { library, jobs, threads, base_dir: base_dir.to_string() })
+        Ok(LibraryJob {
+            library,
+            jobs,
+            threads,
+            base_dir: base_dir.to_string(),
+        })
     }
 
     pub fn load(path: &str) -> Result<LibraryJob, LibraryError> {
-        let text = std::fs::read_to_string(path).map_err(|e| LibraryError(format!("{path}: {e}")))?;
-        let base = Path::new(path).parent().and_then(|p| p.to_str()).unwrap_or(".");
+        let text =
+            std::fs::read_to_string(path).map_err(|e| LibraryError(format!("{path}: {e}")))?;
+        let base = Path::new(path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".");
         LibraryJob::parse(&text, base)
     }
 }
@@ -115,7 +130,7 @@ fn resolve(base: &str, rel: &str) -> String {
 /// Result of a library run: one merged `.lib` per corner, the cells that failed
 /// (name + error — never aborts the whole run), and the cell count attempted.
 pub struct LibraryResult {
-    pub libs: Vec<(String, String)>, // (corner_name, merged_lib_text)
+    pub libs: Vec<(String, String)>,     // (corner_name, merged_lib_text)
     pub failures: Vec<(String, String)>, // (cell, error)
     pub cells: usize,
 }
@@ -183,5 +198,9 @@ pub fn run_library(ljob: &LibraryJob) -> Result<LibraryResult, CharError> {
         })
         .collect();
 
-    Ok(LibraryResult { libs, failures, cells: jobs.len() })
+    Ok(LibraryResult {
+        libs,
+        failures,
+        cells: jobs.len(),
+    })
 }

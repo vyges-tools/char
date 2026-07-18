@@ -4,7 +4,10 @@ use vyges_char::surrogate::{holdout_eval, holdout_eval_log, Poly2};
 
 /// Build a `slews x loads` grid by sampling `f`.
 fn grid(slews: &[f64], loads: &[f64], f: impl Fn(f64, f64) -> f64) -> Vec<Vec<f64>> {
-    slews.iter().map(|&s| loads.iter().map(|&l| f(s, l)).collect()).collect()
+    slews
+        .iter()
+        .map(|&s| loads.iter().map(|&l| f(s, l)).collect())
+        .collect()
 }
 
 const SLEWS4: [f64; 4] = [0.01, 0.04, 0.16, 0.64];
@@ -52,8 +55,15 @@ fn holdout_on_curved_surface_is_small() {
     // a degree-2 fit should track this surface to within a few percent of peak.
     assert!(e.max_rel_pct < 10.0, "max_rel_pct={}", e.max_rel_pct);
     // relative errors are normalized by the grid peak (definitional), and rms <= max.
-    let peak = vals.iter().flatten().cloned().fold(0.0f64, |m, v| m.max(v.abs()));
-    assert!((e.scale - peak).abs() < 1e-12, "scale should be the grid peak");
+    let peak = vals
+        .iter()
+        .flatten()
+        .cloned()
+        .fold(0.0f64, |m, v| m.max(v.abs()));
+    assert!(
+        (e.scale - peak).abs() < 1e-12,
+        "scale should be the grid peak"
+    );
     assert!((e.max_rel_pct - e.max_abs / e.scale * 100.0).abs() < 1e-9);
     assert!(e.rms_rel_pct <= e.max_rel_pct + 1e-9);
 }
@@ -65,10 +75,17 @@ fn log_space_fits_power_law_essentially_exactly() {
     let power = |s: f64, l: f64| 0.5 * s.powf(0.8) * l.powf(0.4);
     let vals = grid(&SLEWS4, &LOADS4, power);
     let e = holdout_eval_log(&SLEWS4, &LOADS4, &vals, 1).expect("log eval");
-    assert!(e.max_rel_pct < 1e-6, "log power-law max_rel_pct={}", e.max_rel_pct);
+    assert!(
+        e.max_rel_pct < 1e-6,
+        "log power-law max_rel_pct={}",
+        e.max_rel_pct
+    );
     // the same surface in linear space at degree 1 is far worse (sanity: log helps).
     let lin = holdout_eval(&SLEWS4, &LOADS4, &vals, 1).expect("lin eval");
-    assert!(lin.max_rel_pct > e.max_rel_pct, "log should beat linear here");
+    assert!(
+        lin.max_rel_pct > e.max_rel_pct,
+        "log should beat linear here"
+    );
 }
 
 #[test]

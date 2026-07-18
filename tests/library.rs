@@ -23,9 +23,18 @@ fn manifest_defaults_threads_to_parallelism() {
 
 #[test]
 fn manifest_requires_library_and_jobs() {
-    assert!(LibraryJob::parse("jobs: a.char\n", ".").is_err(), "missing library");
-    assert!(LibraryJob::parse("library: x\n", ".").is_err(), "missing jobs");
-    assert!(LibraryJob::parse("library: x\nbogus: 1\njobs: a.char\n", ".").is_err(), "unknown key");
+    assert!(
+        LibraryJob::parse("jobs: a.char\n", ".").is_err(),
+        "missing library"
+    );
+    assert!(
+        LibraryJob::parse("library: x\n", ".").is_err(),
+        "missing jobs"
+    );
+    assert!(
+        LibraryJob::parse("library: x\nbogus: 1\njobs: a.char\n", ".").is_err(),
+        "unknown key"
+    );
 }
 
 // a comb cell lib (nldm template) ...
@@ -116,7 +125,12 @@ fn merge_unions_templates_and_keeps_all_cells() {
     // templates unioned, each declared exactly once (vyges_nldm appears in BOTH
     // inputs but must not be duplicated; vyges_constraint comes only from B).
     assert_eq!(merged.matches("lu_table_template (vyges_nldm)").count(), 1);
-    assert_eq!(merged.matches("lu_table_template (vyges_constraint)").count(), 1);
+    assert_eq!(
+        merged
+            .matches("lu_table_template (vyges_constraint)")
+            .count(),
+        1
+    );
 
     // library-level attributes unioned (leakage unit came only from B).
     assert_eq!(merged.matches("delay_model : table_lookup;").count(), 1);
@@ -133,5 +147,9 @@ fn merge_single_lib_is_well_formed() {
     let merged = merge_libraries("solo", &[LIB_A.to_string()]);
     assert!(braces_balanced(&merged));
     assert!(merged.contains("cell (INV) {"));
-    assert_eq!(merged.matches("library (").count(), 1, "exactly one library header");
+    assert_eq!(
+        merged.matches("library (").count(),
+        1,
+        "exactly one library header"
+    );
 }

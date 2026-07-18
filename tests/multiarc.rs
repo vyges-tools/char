@@ -22,7 +22,10 @@ fn parses_multiple_arcs_with_side_inputs() {
     assert_eq!(job.in_pin, "A");
     assert_eq!(job.out_pin, "Y");
     let a = &job.arcs[0];
-    assert_eq!((a.in_pin.as_str(), a.out_pin.as_str(), a.sense.as_str()), ("A", "Y", "negative_unate"));
+    assert_eq!(
+        (a.in_pin.as_str(), a.out_pin.as_str(), a.sense.as_str()),
+        ("A", "Y", "negative_unate")
+    );
     assert_eq!(a.side, vec![("B".to_string(), true)]); // B held high (non-controlling for NAND)
     let b = &job.arcs[1];
     assert_eq!(b.in_pin, "B");
@@ -53,8 +56,12 @@ fn arc(in_pin: &str, out_pin: &str) -> Arc {
         in_pin: in_pin.into(),
         out_pin: out_pin.into(),
         sense: "negative_unate".into(),
-        cell_rise: Table { values: vec![vec![0.10, 0.20], vec![0.30, 0.40]] },
-        cell_fall: Table { values: vec![vec![0.11, 0.21], vec![0.31, 0.41]] },
+        cell_rise: Table {
+            values: vec![vec![0.10, 0.20], vec![0.30, 0.40]],
+        },
+        cell_fall: Table {
+            values: vec![vec![0.11, 0.21], vec![0.31, 0.41]],
+        },
         rise_transition: Table::new(2, 2),
         fall_transition: Table::new(2, 2),
         sigma_rise: Table::new(2, 2),
@@ -75,12 +82,26 @@ fn arc(in_pin: &str, out_pin: &str) -> Arc {
 fn render_groups_arcs_into_one_cell() {
     let (slews, loads) = (vec![0.01, 0.04], vec![0.001, 0.004]);
     // NAND2: A->Y and B->Y -> ONE cell, two input pins, one output pin, two timings.
-    let lib = render("L", &Units::default(), &slews, &loads, &[arc("A", "Y"), arc("B", "Y")]);
-    assert_eq!(lib.matches("cell (NAND2)").count(), 1, "arcs of one cell merge into one cell");
+    let lib = render(
+        "L",
+        &Units::default(),
+        &slews,
+        &loads,
+        &[arc("A", "Y"), arc("B", "Y")],
+    );
+    assert_eq!(
+        lib.matches("cell (NAND2)").count(),
+        1,
+        "arcs of one cell merge into one cell"
+    );
     assert_eq!(lib.matches("pin (A)").count(), 1);
     assert_eq!(lib.matches("pin (B)").count(), 1);
     assert_eq!(lib.matches("pin (Y)").count(), 1, "single output pin");
-    assert_eq!(lib.matches("timing ()").count(), 2, "one timing arc per input");
+    assert_eq!(
+        lib.matches("timing ()").count(),
+        2,
+        "one timing arc per input"
+    );
     assert_eq!(lib.matches("related_pin : \"A\"").count(), 1);
     assert_eq!(lib.matches("related_pin : \"B\"").count(), 1);
 }
@@ -89,7 +110,13 @@ fn render_groups_arcs_into_one_cell() {
 fn render_handles_multi_output_cell() {
     let (slews, loads) = (vec![0.01, 0.04], vec![0.001, 0.004]);
     // A drives two outputs Y and Z -> one input pin, two output pins.
-    let lib = render("L", &Units::default(), &slews, &loads, &[arc("A", "Y"), arc("A", "Z")]);
+    let lib = render(
+        "L",
+        &Units::default(),
+        &slews,
+        &loads,
+        &[arc("A", "Y"), arc("A", "Z")],
+    );
     assert_eq!(lib.matches("pin (A)").count(), 1, "input pin emitted once");
     assert_eq!(lib.matches("pin (Y)").count(), 1);
     assert_eq!(lib.matches("pin (Z)").count(), 1);

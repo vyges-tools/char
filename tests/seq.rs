@@ -18,7 +18,10 @@ fn parses_sequential_job() {
     assert_eq!(job.data_pin, "D");
     assert_eq!(job.out_pin, "Q");
     assert_eq!(job.clock_edge, "rising"); // default
-    assert!(job.arcs.is_empty(), "sequential job has no combinational arcs");
+    assert!(
+        job.arcs.is_empty(),
+        "sequential job has no combinational arcs"
+    );
 }
 
 #[test]
@@ -32,22 +35,44 @@ fn seq_job_requires_clock_and_data() {
 fn deck_seq_has_prime_and_capture_clock() {
     // rising-edge flop, capture rising Q; one data edge (setup)
     let d = deck_seq(
-        "t", &["dff.spice".into()], &[], "X1 CLK D VGND VNB VPB VPWR Q DFF",
-        "CLK", "D", "Q", 1.8, 0.05, 0.005, true, 0.0, 0.05, &[(6.5, 1.8)], true, &[],
+        "t",
+        &["dff.spice".into()],
+        &[],
+        "X1 CLK D VGND VNB VPB VPWR Q DFF",
+        "CLK",
+        "D",
+        "Q",
+        1.8,
+        0.05,
+        0.005,
+        true,
+        0.0,
+        0.05,
+        &[(6.5, 1.8)],
+        true,
+        &[],
     );
     // sources drive through small series Rs (de-stiffen the flop's storage nodes)
     assert!(d.contains("RCK cks CLK 1"), "clock through series R");
     assert!(d.contains("RD ds D 1"), "data through series R");
-    assert!(d.contains("RVDD") && d.contains("RVSS"), "power through series R");
+    assert!(
+        d.contains("RVDD") && d.contains("RVSS"),
+        "power through series R"
+    );
     assert!(d.contains("CL Q 0 0.005p"), "Q loaded");
     // CK->Q measured at the 2nd (capture) clock rising edge, rising Q
-    assert!(d.contains("TRIG v(CLK) VAL=0.9 RISE=2"), "capture = 2nd clock edge");
+    assert!(
+        d.contains("TRIG v(CLK) VAL=0.9 RISE=2"),
+        "capture = 2nd clock edge"
+    );
     assert!(d.contains("TARG v(Q) VAL=0.9 RISE=1"));
     assert!(d.contains("ckq") && d.contains("q_slew"));
 }
 
 fn tbl(v: f64) -> Table {
-    Table { values: vec![vec![v; 2], vec![v; 2]] }
+    Table {
+        values: vec![vec![v; 2], vec![v; 2]],
+    }
 }
 
 #[test]
@@ -63,10 +88,18 @@ fn render_seq_emits_ff_constraints_and_ckq() {
         setup_fall: tbl(0.12),
         hold_rise: tbl(0.02),
         hold_fall: tbl(0.03),
-        ckq_rise: Table { values: vec![vec![0.25], vec![0.30]] },
-        ckq_fall: Table { values: vec![vec![0.24], vec![0.29]] },
-        ckq_rise_trans: Table { values: vec![vec![0.06], vec![0.07]] },
-        ckq_fall_trans: Table { values: vec![vec![0.05], vec![0.06]] },
+        ckq_rise: Table {
+            values: vec![vec![0.25], vec![0.30]],
+        },
+        ckq_fall: Table {
+            values: vec![vec![0.24], vec![0.29]],
+        },
+        ckq_rise_trans: Table {
+            values: vec![vec![0.06], vec![0.07]],
+        },
+        ckq_fall_trans: Table {
+            values: vec![vec![0.05], vec![0.06]],
+        },
         asyncs: vec![],
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
@@ -101,14 +134,21 @@ fn falling_edge_flop_inverts_clocked_on() {
         setup_fall: tbl(0.10),
         hold_rise: tbl(0.02),
         hold_fall: tbl(0.02),
-        ckq_rise: Table { values: vec![vec![0.25], vec![0.30]] },
-        ckq_fall: Table { values: vec![vec![0.25], vec![0.30]] },
+        ckq_rise: Table {
+            values: vec![vec![0.25], vec![0.30]],
+        },
+        ckq_fall: Table {
+            values: vec![vec![0.25], vec![0.30]],
+        },
         ckq_rise_trans: tbl(0.06),
         ckq_fall_trans: tbl(0.06),
         asyncs: vec![],
     };
     let lib = render_seq("L", &Units::default(), &slews, &loads, &cell);
-    assert!(lib.contains("clocked_on : \"!CLKN\""), "falling edge -> inverted clock");
+    assert!(
+        lib.contains("clocked_on : \"!CLKN\""),
+        "falling edge -> inverted clock"
+    );
     assert!(lib.contains("timing_type : setup_falling;"));
     assert!(lib.contains("timing_type : falling_edge;"));
     cell.rising_edge = true; // sanity: flips back

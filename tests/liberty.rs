@@ -31,7 +31,13 @@ fn arc() -> Arc {
 
 #[test]
 fn emits_valid_structure() {
-    let lib = render("L", &Units::default(), &[0.01, 0.04], &[0.001, 0.004], &[arc()]);
+    let lib = render(
+        "L",
+        &Units::default(),
+        &[0.01, 0.04],
+        &[0.001, 0.004],
+        &[arc()],
+    );
     assert!(lib.contains("library (L) {"));
     assert!(lib.contains("delay_model : table_lookup;"));
     assert!(lib.contains("lu_table_template (vyges_nldm)"));
@@ -39,7 +45,12 @@ fn emits_valid_structure() {
     assert!(lib.contains("pin (Y)"));
     assert!(lib.contains("related_pin : \"A\";"));
     assert!(lib.contains("timing_sense : negative_unate;"));
-    for tbl in ["cell_rise", "cell_fall", "rise_transition", "fall_transition"] {
+    for tbl in [
+        "cell_rise",
+        "cell_fall",
+        "rise_transition",
+        "fall_transition",
+    ] {
         assert!(lib.contains(tbl), "missing {tbl}");
     }
     // index from the slew/load vectors
@@ -49,14 +60,26 @@ fn emits_valid_structure() {
 
 #[test]
 fn table_values_rendered() {
-    let lib = render("L", &Units::default(), &[0.01, 0.04], &[0.001, 0.004], &[arc()]);
+    let lib = render(
+        "L",
+        &Units::default(),
+        &[0.01, 0.04],
+        &[0.001, 0.004],
+        &[arc()],
+    );
     assert!(lib.contains("0.100000")); // cell_rise[0][0]
     assert!(lib.contains("3.100000")); // cell_rise[1][1] = 0.1+3
 }
 
 #[test]
 fn balanced_braces() {
-    let lib = render("L", &Units::default(), &[0.01, 0.04], &[0.001, 0.004], &[arc()]);
+    let lib = render(
+        "L",
+        &Units::default(),
+        &[0.01, 0.04],
+        &[0.001, 0.004],
+        &[arc()],
+    );
     let open = lib.matches('{').count();
     let close = lib.matches('}').count();
     assert_eq!(open, close, "unbalanced braces in emitted .lib");

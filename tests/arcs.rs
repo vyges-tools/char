@@ -15,13 +15,22 @@ fn summary(out: &str, func: &str) -> Vec<(String, String)> {
 
 #[test]
 fn inverter_is_negative_unate() {
-    assert_eq!(summary("Y", "!A"), vec![("A".into(), "negative_unate".into())]);
-    assert_eq!(summary("Y", "A'"), vec![("A".into(), "negative_unate".into())]);
+    assert_eq!(
+        summary("Y", "!A"),
+        vec![("A".into(), "negative_unate".into())]
+    );
+    assert_eq!(
+        summary("Y", "A'"),
+        vec![("A".into(), "negative_unate".into())]
+    );
 }
 
 #[test]
 fn buffer_is_positive_unate() {
-    assert_eq!(summary("X", "A"), vec![("A".into(), "positive_unate".into())]);
+    assert_eq!(
+        summary("X", "A"),
+        vec![("A".into(), "positive_unate".into())]
+    );
 }
 
 #[test]
@@ -30,7 +39,10 @@ fn nand_both_inputs_negative_unate() {
     for f in ["!(A & B)", "(A B)'", "!(A*B)"] {
         assert_eq!(
             summary("Y", f),
-            vec![("A".into(), "negative_unate".into()), ("B".into(), "negative_unate".into())],
+            vec![
+                ("A".into(), "negative_unate".into()),
+                ("B".into(), "negative_unate".into())
+            ],
             "func {f}"
         );
     }
@@ -40,11 +52,17 @@ fn nand_both_inputs_negative_unate() {
 fn nor_and_or_and_senses() {
     assert_eq!(
         summary("Y", "!(A + B)"), // NOR
-        vec![("A".into(), "negative_unate".into()), ("B".into(), "negative_unate".into())]
+        vec![
+            ("A".into(), "negative_unate".into()),
+            ("B".into(), "negative_unate".into())
+        ]
     );
     assert_eq!(
         summary("X", "A + B"), // OR
-        vec![("A".into(), "positive_unate".into()), ("B".into(), "positive_unate".into())]
+        vec![
+            ("A".into(), "positive_unate".into()),
+            ("B".into(), "positive_unate".into())
+        ]
     );
     assert_eq!(
         summary("X", "A & B & C"), // AND3
@@ -74,7 +92,10 @@ fn and2b_one_inverted_input() {
     // and2b: X = !A_N & B  -> A_N inverting, B non-inverting
     assert_eq!(
         summary("X", "!A_N & B"),
-        vec![("A_N".into(), "negative_unate".into()), ("B".into(), "positive_unate".into())]
+        vec![
+            ("A_N".into(), "negative_unate".into()),
+            ("B".into(), "positive_unate".into())
+        ]
     );
 }
 
@@ -86,7 +107,11 @@ fn xor_is_characterizable_under_a_definite_side() {
     assert_eq!(arcs.len(), 2, "one arc per input");
     for a in &arcs {
         assert!(a.sense == "positive_unate" || a.sense == "negative_unate");
-        assert_eq!(a.side.len(), 1, "the other input is pinned to a definite value");
+        assert_eq!(
+            a.side.len(),
+            1,
+            "the other input is pinned to a definite value"
+        );
     }
 }
 
@@ -128,10 +153,16 @@ library (ref) {
     s.sort();
     assert_eq!(
         s,
-        vec![("A".into(), "negative_unate".into()), ("B".into(), "negative_unate".into())]
+        vec![
+            ("A".into(), "negative_unate".into()),
+            ("B".into(), "negative_unate".into())
+        ]
     );
     // picks the right cell among several; buffer is positive-unate
-    assert_eq!(arcs_from_lib(lib, "MYBUF").unwrap()[0].sense, "positive_unate");
+    assert_eq!(
+        arcs_from_lib(lib, "MYBUF").unwrap()[0].sense,
+        "positive_unate"
+    );
     // missing cell errors
     assert!(arcs_from_lib(lib, "NOPE").is_err());
 }

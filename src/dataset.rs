@@ -105,28 +105,152 @@ pub fn rows_comb(ctx: &Ctx, arcs: &[Arc]) -> Vec<Row> {
     let mut rows = Vec::new();
     for a in arcs {
         let arc = format!("{}->{}", a.in_pin, a.out_pin);
-        let g = TableRef { ctx, cell: &a.cell, arc: &arc };
-        g.push(&mut rows, "delay", "cell_rise", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.cell_rise, "ns");
-        g.push(&mut rows, "delay", "cell_fall", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.cell_fall, "ns");
-        g.push(&mut rows, "transition", "rise_transition", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.rise_transition, "ns");
-        g.push(&mut rows, "transition", "fall_transition", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.fall_transition, "ns");
+        let g = TableRef {
+            ctx,
+            cell: &a.cell,
+            arc: &arc,
+        };
+        g.push(
+            &mut rows,
+            "delay",
+            "cell_rise",
+            IN_SLEW,
+            ctx.slews,
+            OUT_LOAD,
+            ctx.loads,
+            &a.cell_rise,
+            "ns",
+        );
+        g.push(
+            &mut rows,
+            "delay",
+            "cell_fall",
+            IN_SLEW,
+            ctx.slews,
+            OUT_LOAD,
+            ctx.loads,
+            &a.cell_fall,
+            "ns",
+        );
+        g.push(
+            &mut rows,
+            "transition",
+            "rise_transition",
+            IN_SLEW,
+            ctx.slews,
+            OUT_LOAD,
+            ctx.loads,
+            &a.rise_transition,
+            "ns",
+        );
+        g.push(
+            &mut rows,
+            "transition",
+            "fall_transition",
+            IN_SLEW,
+            ctx.slews,
+            OUT_LOAD,
+            ctx.loads,
+            &a.fall_transition,
+            "ns",
+        );
         if a.sigma_rise.any_nonzero() {
-            g.push(&mut rows, "lvf", "sigma_rise", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.sigma_rise, "ns");
+            g.push(
+                &mut rows,
+                "lvf",
+                "sigma_rise",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.sigma_rise,
+                "ns",
+            );
         }
         if a.sigma_fall.any_nonzero() {
-            g.push(&mut rows, "lvf", "sigma_fall", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.sigma_fall, "ns");
+            g.push(
+                &mut rows,
+                "lvf",
+                "sigma_fall",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.sigma_fall,
+                "ns",
+            );
         }
         if a.int_rise.any_nonzero() {
-            g.push(&mut rows, "power", "int_rise", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.int_rise, "pJ");
+            g.push(
+                &mut rows,
+                "power",
+                "int_rise",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.int_rise,
+                "pJ",
+            );
         }
         if a.int_fall.any_nonzero() {
-            g.push(&mut rows, "power", "int_fall", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.int_fall, "pJ");
+            g.push(
+                &mut rows,
+                "power",
+                "int_fall",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.int_fall,
+                "pJ",
+            );
         }
         if a.has_recv() {
-            g.push(&mut rows, "recv", "recv_c1_rise", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.recv_c1_rise, "pF");
-            g.push(&mut rows, "recv", "recv_c2_rise", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.recv_c2_rise, "pF");
-            g.push(&mut rows, "recv", "recv_c1_fall", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.recv_c1_fall, "pF");
-            g.push(&mut rows, "recv", "recv_c2_fall", IN_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &a.recv_c2_fall, "pF");
+            g.push(
+                &mut rows,
+                "recv",
+                "recv_c1_rise",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.recv_c1_rise,
+                "pF",
+            );
+            g.push(
+                &mut rows,
+                "recv",
+                "recv_c2_rise",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.recv_c2_rise,
+                "pF",
+            );
+            g.push(
+                &mut rows,
+                "recv",
+                "recv_c1_fall",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.recv_c1_fall,
+                "pF",
+            );
+            g.push(
+                &mut rows,
+                "recv",
+                "recv_c2_fall",
+                IN_SLEW,
+                ctx.slews,
+                OUT_LOAD,
+                ctx.loads,
+                &a.recv_c2_fall,
+                "pF",
+            );
         }
     }
     // Leakage is cell-level (carried on every arc); emit once from the first arc with it.
@@ -158,32 +282,160 @@ pub fn rows_comb(ctx: &Ctx, arcs: &[Arc]) -> Vec<Row> {
 pub fn rows_seq(ctx: &Ctx, c: &SeqCell) -> Vec<Row> {
     let mut rows = Vec::new();
     let ckq = format!("{}->{}", c.clock_pin, c.out_pin);
-    let g = TableRef { ctx, cell: &c.cell, arc: &ckq };
-    g.push(&mut rows, "delay", "ckq_rise", CLK_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &c.ckq_rise, "ns");
-    g.push(&mut rows, "delay", "ckq_fall", CLK_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &c.ckq_fall, "ns");
-    g.push(&mut rows, "transition", "ckq_rise_trans", CLK_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &c.ckq_rise_trans, "ns");
-    g.push(&mut rows, "transition", "ckq_fall_trans", CLK_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &c.ckq_fall_trans, "ns");
+    let g = TableRef {
+        ctx,
+        cell: &c.cell,
+        arc: &ckq,
+    };
+    g.push(
+        &mut rows,
+        "delay",
+        "ckq_rise",
+        CLK_SLEW,
+        ctx.slews,
+        OUT_LOAD,
+        ctx.loads,
+        &c.ckq_rise,
+        "ns",
+    );
+    g.push(
+        &mut rows,
+        "delay",
+        "ckq_fall",
+        CLK_SLEW,
+        ctx.slews,
+        OUT_LOAD,
+        ctx.loads,
+        &c.ckq_fall,
+        "ns",
+    );
+    g.push(
+        &mut rows,
+        "transition",
+        "ckq_rise_trans",
+        CLK_SLEW,
+        ctx.slews,
+        OUT_LOAD,
+        ctx.loads,
+        &c.ckq_rise_trans,
+        "ns",
+    );
+    g.push(
+        &mut rows,
+        "transition",
+        "ckq_fall_trans",
+        CLK_SLEW,
+        ctx.slews,
+        OUT_LOAD,
+        ctx.loads,
+        &c.ckq_fall_trans,
+        "ns",
+    );
 
     // setup/hold: clock slew (index_1) × data slew (index_2).
     let dvc = format!("{} vs {}", c.data_pin, c.clock_pin);
-    let s = TableRef { ctx, cell: &c.cell, arc: &dvc };
-    s.push(&mut rows, "constraint", "setup_rise", CLK_SLEW, ctx.slews, DATA_SLEW, ctx.slews, &c.setup_rise, "ns");
-    s.push(&mut rows, "constraint", "setup_fall", CLK_SLEW, ctx.slews, DATA_SLEW, ctx.slews, &c.setup_fall, "ns");
-    s.push(&mut rows, "constraint", "hold_rise", CLK_SLEW, ctx.slews, DATA_SLEW, ctx.slews, &c.hold_rise, "ns");
-    s.push(&mut rows, "constraint", "hold_fall", CLK_SLEW, ctx.slews, DATA_SLEW, ctx.slews, &c.hold_fall, "ns");
+    let s = TableRef {
+        ctx,
+        cell: &c.cell,
+        arc: &dvc,
+    };
+    s.push(
+        &mut rows,
+        "constraint",
+        "setup_rise",
+        CLK_SLEW,
+        ctx.slews,
+        DATA_SLEW,
+        ctx.slews,
+        &c.setup_rise,
+        "ns",
+    );
+    s.push(
+        &mut rows,
+        "constraint",
+        "setup_fall",
+        CLK_SLEW,
+        ctx.slews,
+        DATA_SLEW,
+        ctx.slews,
+        &c.setup_fall,
+        "ns",
+    );
+    s.push(
+        &mut rows,
+        "constraint",
+        "hold_rise",
+        CLK_SLEW,
+        ctx.slews,
+        DATA_SLEW,
+        ctx.slews,
+        &c.hold_rise,
+        "ns",
+    );
+    s.push(
+        &mut rows,
+        "constraint",
+        "hold_fall",
+        CLK_SLEW,
+        ctx.slews,
+        DATA_SLEW,
+        ctx.slews,
+        &c.hold_fall,
+        "ns",
+    );
 
     for ctl in &c.asyncs {
         let aq = format!("{}->{}", ctl.pin, c.out_pin);
-        let a = TableRef { ctx, cell: &c.cell, arc: &aq };
-        a.push(&mut rows, "delay", "async_q", ASYNC_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &ctl.q, "ns");
-        a.push(&mut rows, "transition", "async_q_trans", ASYNC_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &ctl.q_trans, "ns");
+        let a = TableRef {
+            ctx,
+            cell: &c.cell,
+            arc: &aq,
+        };
+        a.push(
+            &mut rows, "delay", "async_q", ASYNC_SLEW, ctx.slews, OUT_LOAD, ctx.loads, &ctl.q, "ns",
+        );
+        a.push(
+            &mut rows,
+            "transition",
+            "async_q_trans",
+            ASYNC_SLEW,
+            ctx.slews,
+            OUT_LOAD,
+            ctx.loads,
+            &ctl.q_trans,
+            "ns",
+        );
         let avc = format!("{} vs {}", ctl.pin, c.clock_pin);
-        let r = TableRef { ctx, cell: &c.cell, arc: &avc };
+        let r = TableRef {
+            ctx,
+            cell: &c.cell,
+            arc: &avc,
+        };
         if ctl.recovery.any_nonzero() {
-            r.push(&mut rows, "constraint", "recovery", CLK_SLEW, ctx.slews, ASYNC_SLEW, ctx.slews, &ctl.recovery, "ns");
+            r.push(
+                &mut rows,
+                "constraint",
+                "recovery",
+                CLK_SLEW,
+                ctx.slews,
+                ASYNC_SLEW,
+                ctx.slews,
+                &ctl.recovery,
+                "ns",
+            );
         }
         if ctl.removal.any_nonzero() {
-            r.push(&mut rows, "constraint", "removal", CLK_SLEW, ctx.slews, ASYNC_SLEW, ctx.slews, &ctl.removal, "ns");
+            r.push(
+                &mut rows,
+                "constraint",
+                "removal",
+                CLK_SLEW,
+                ctx.slews,
+                ASYNC_SLEW,
+                ctx.slews,
+                &ctl.removal,
+                "ns",
+            );
         }
     }
     rows

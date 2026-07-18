@@ -39,8 +39,10 @@ fn parse_arc_spec(s: &str) -> Result<ArcSpec, JobError> {
         .next()
         .ok_or_else(|| JobError("arc: needs '<in> <out> <sense> [side=0|1 ...]'".into()))?
         .to_string();
-    let out_pin =
-        toks.next().ok_or_else(|| JobError(format!("arc {in_pin:?}: missing <out> pin")))?.to_string();
+    let out_pin = toks
+        .next()
+        .ok_or_else(|| JobError(format!("arc {in_pin:?}: missing <out> pin")))?
+        .to_string();
     let sense = toks.next().unwrap_or("negative_unate").to_string();
     let mut side = Vec::new();
     for t in toks {
@@ -54,7 +56,12 @@ fn parse_arc_spec(s: &str) -> Result<ArcSpec, JobError> {
         };
         side.push((pin.to_string(), high));
     }
-    Ok(ArcSpec { in_pin, out_pin, sense, side })
+    Ok(ArcSpec {
+        in_pin,
+        out_pin,
+        sense,
+        side,
+    })
 }
 
 /// A PVT corner to characterize: a named (process models, supply, temperature)
@@ -77,15 +84,26 @@ fn parse_corner(s: &str, default_temp: f64) -> Result<Corner, JobError> {
             "corner needs 'name | models | vdd [| temp]', got {s:?}"
         )));
     }
-    let models: Vec<String> =
-        parts[1].split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
-    let vdd =
-        parts[2].parse::<f64>().map_err(|_| JobError(format!("corner vdd not a number: {:?}", parts[2])))?;
+    let models: Vec<String> = parts[1]
+        .split(',')
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    let vdd = parts[2]
+        .parse::<f64>()
+        .map_err(|_| JobError(format!("corner vdd not a number: {:?}", parts[2])))?;
     let temp = match parts.get(3) {
-        Some(t) => t.parse::<f64>().map_err(|_| JobError(format!("corner temp not a number: {t:?}")))?,
+        Some(t) => t
+            .parse::<f64>()
+            .map_err(|_| JobError(format!("corner temp not a number: {t:?}")))?,
         None => default_temp,
     };
-    Ok(Corner { name: parts[0].to_string(), models, vdd, temp })
+    Ok(Corner {
+        name: parts[0].to_string(),
+        models,
+        vdd,
+        temp,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +112,7 @@ pub struct CharJob {
     pub netlist: String,
     pub in_pin: String,
     pub out_pin: String,
-    pub sense: String, // negative_unate | positive_unate | non_unate
+    pub sense: String,      // negative_unate | positive_unate | non_unate
     pub arcs: Vec<ArcSpec>, // one or more timing arcs (multi-input/multi-output cells)
     pub slews: Vec<f64>,
     pub loads: Vec<f64>,
@@ -113,7 +131,7 @@ pub struct CharJob {
     pub seq: bool,
     pub clock_pin: String,
     pub data_pin: String,
-    pub clock_edge: String,  // "rising" | "falling"
+    pub clock_edge: String, // "rising" | "falling"
     // Async set/reset flops: `tie` holds the named pins at a fixed level (their
     // inactive state) during setup/hold/CK->Q characterization; `reset_pin` (if set)
     // additionally emits the `ff` clear attribute and characterizes the async
@@ -123,7 +141,7 @@ pub struct CharJob {
     pub reset_active_low: bool,
     pub set_pin: String,
     pub set_active_low: bool,
-    pub power_char: bool,     // characterize internal_power (per arc) + leakage_power (per state)
+    pub power_char: bool, // characterize internal_power (per arc) + leakage_power (per state)
     pub corners: Vec<Corner>, // PVT corners to sweep (empty = single run from models/vdd/temp)
     pub ref_lib: Option<String>, // reference .lib to auto-derive arcs from (read at load)
     pub base_dir: String,
@@ -163,14 +181,23 @@ pub struct AutoCfg {
 /// `power:`/`ground:` keys: sky130 (`VPWR`/`VPB`, `VGND`/`VNB`) and gf180mcu
 /// (`VDD`/`VNW` n-well tie, `VSS`/`VPW` p-well tie).
 fn default_power() -> Vec<String> {
-    ["VPWR", "VPB", "VNW", "VDD", "VCCD", "VCC"].iter().map(|s| s.to_string()).collect()
+    ["VPWR", "VPB", "VNW", "VDD", "VCCD", "VCC"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 fn default_ground() -> Vec<String> {
-    ["VGND", "VNB", "VPW", "VSS", "VSSD", "GND"].iter().map(|s| s.to_string()).collect()
+    ["VGND", "VNB", "VPW", "VSS", "VSSD", "GND"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn names(s: &str) -> Vec<String> {
-    s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+    s.split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 /// Whether an async pin is active-low: explicit `<active_key>: low|high` wins,
@@ -217,7 +244,10 @@ fn floats(s: &str) -> Result<Vec<f64>, JobError> {
     s.split(',')
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
-        .map(|t| t.parse::<f64>().map_err(|_| JobError(format!("not a number: {t:?}"))))
+        .map(|t| {
+            t.parse::<f64>()
+                .map_err(|_| JobError(format!("not a number: {t:?}")))
+        })
         .collect()
 }
 
@@ -254,12 +284,19 @@ impl CharJob {
             }
         }
         let get = |k: &str| -> Result<String, JobError> {
-            kv.get(k).cloned().ok_or_else(|| JobError(format!("missing key: {k}")))
+            kv.get(k)
+                .cloned()
+                .ok_or_else(|| JobError(format!("missing key: {k}")))
         };
         let num = |k: &str| -> Result<f64, JobError> {
-            get(k)?.parse::<f64>().map_err(|_| JobError(format!("{k} is not a number")))
+            get(k)?
+                .parse::<f64>()
+                .map_err(|_| JobError(format!("{k} is not a number")))
         };
-        let is_seq = kv.get("seq").map(|s| s == "true" || s == "1").unwrap_or(false)
+        let is_seq = kv
+            .get("seq")
+            .map(|s| s == "true" || s == "1")
+            .unwrap_or(false)
             || kv.contains_key("clock_pin");
         // Arcs: explicit `arc:` lines (multi-arc cells) win; otherwise synthesize a
         // single arc from in_pin/out_pin/sense (the back-compatible single-arc form).
@@ -270,7 +307,10 @@ impl CharJob {
         let arcs: Vec<ArcSpec> = if is_seq {
             Vec::new()
         } else if !arc_lines.is_empty() {
-            arc_lines.iter().map(|l| parse_arc_spec(l)).collect::<Result<_, _>>()?
+            arc_lines
+                .iter()
+                .map(|l| parse_arc_spec(l))
+                .collect::<Result<_, _>>()?
         } else if !function_lines.is_empty() {
             let mut v = Vec::new();
             for fl in &function_lines {
@@ -288,7 +328,10 @@ impl CharJob {
             vec![ArcSpec {
                 in_pin: get("in_pin")?,
                 out_pin: get("out_pin")?,
-                sense: kv.get("sense").cloned().unwrap_or_else(|| "negative_unate".into()),
+                sense: kv
+                    .get("sense")
+                    .cloned()
+                    .unwrap_or_else(|| "negative_unate".into()),
                 side: Vec::new(),
             }]
         };
@@ -302,18 +345,28 @@ impl CharJob {
             ),
         };
         let default_temp = kv.get("temp").and_then(|t| t.parse().ok()).unwrap_or(25.0);
-        let corners: Vec<Corner> =
-            corner_lines.iter().map(|l| parse_corner(l, default_temp)).collect::<Result<_, _>>()?;
+        let corners: Vec<Corner> = corner_lines
+            .iter()
+            .map(|l| parse_corner(l, default_temp))
+            .collect::<Result<_, _>>()?;
         // Top-level models/vdd default the single-run case; with corners present they
         // fall back to the first corner so the struct is always well-formed.
         let models: Vec<String> = kv
             .get("models")
-            .map(|m| m.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .map(|m| {
+                m.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
             .or_else(|| corners.first().map(|c| c.models.clone()))
             .unwrap_or_default();
         let vdd = match kv.get("vdd") {
             Some(_) => num("vdd")?,
-            None => corners.first().map(|c| c.vdd).ok_or_else(|| JobError("missing key: vdd".into()))?,
+            None => corners
+                .first()
+                .map(|c| c.vdd)
+                .ok_or_else(|| JobError("missing key: vdd".into()))?,
         };
         let job = CharJob {
             cell: get("cell")?,
@@ -327,23 +380,51 @@ impl CharJob {
             vdd,
             temp: default_temp,
             models,
-            power: kv.get("power").map(|s| names(s)).unwrap_or_else(default_power),
-            ground: kv.get("ground").map(|s| names(s)).unwrap_or_else(default_ground),
+            power: kv
+                .get("power")
+                .map(|s| names(s))
+                .unwrap_or_else(default_power),
+            ground: kv
+                .get("ground")
+                .map(|s| names(s))
+                .unwrap_or_else(default_ground),
             osdi: kv.get("osdi").map(|s| names(s)).unwrap_or_default(),
-            montecarlo: kv.get("montecarlo").and_then(|s| s.parse().ok()).unwrap_or(0),
-            ccs: kv.get("ccs").map(|s| s == "true" || s == "1").unwrap_or(false),
-            recv: kv.get("recv").map(|s| s == "true" || s == "1").unwrap_or(false),
-            seq: kv.get("seq").map(|s| s == "true" || s == "1").unwrap_or(false)
+            montecarlo: kv
+                .get("montecarlo")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
+            ccs: kv
+                .get("ccs")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false),
+            recv: kv
+                .get("recv")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false),
+            seq: kv
+                .get("seq")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false)
                 || kv.contains_key("clock_pin"),
             clock_pin: kv.get("clock_pin").cloned().unwrap_or_default(),
             data_pin: kv.get("data_pin").cloned().unwrap_or_default(),
-            clock_edge: kv.get("clock_edge").cloned().unwrap_or_else(|| "rising".into()),
-            tie: kv.get("tie").map(|s| tie_levels(s)).transpose()?.unwrap_or_default(),
+            clock_edge: kv
+                .get("clock_edge")
+                .cloned()
+                .unwrap_or_else(|| "rising".into()),
+            tie: kv
+                .get("tie")
+                .map(|s| tie_levels(s))
+                .transpose()?
+                .unwrap_or_default(),
             reset_pin: kv.get("reset_pin").cloned().unwrap_or_default(),
             reset_active_low: active_low(&kv, "reset_pin", "reset_active"),
             set_pin: kv.get("set_pin").cloned().unwrap_or_default(),
             set_active_low: active_low(&kv, "set_pin", "set_active"),
-            power_char: kv.get("power_char").map(|s| s == "true" || s == "1").unwrap_or(false),
+            power_char: kv
+                .get("power_char")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false),
             corners,
             ref_lib: kv.get("ref_lib").filter(|s| !s.is_empty()).cloned(),
             base_dir: base_dir.to_string(),
@@ -361,7 +442,10 @@ impl CharJob {
 
     pub fn load(path: &str) -> Result<CharJob, JobError> {
         let text = std::fs::read_to_string(path).map_err(|e| JobError(format!("{path}: {e}")))?;
-        let base = Path::new(path).parent().and_then(|p| p.to_str()).unwrap_or(".");
+        let base = Path::new(path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".");
         let mut job = CharJob::parse(&text, base)?;
         // Auto-derive arcs from a reference `.lib` (combinational cells): read the
         // cell's output-pin functions and derive arcs, so no `arc:`/`function:`
@@ -371,7 +455,10 @@ impl CharJob {
                 let resolved = if Path::new(&ref_lib).is_absolute() || job.base_dir.is_empty() {
                     ref_lib.clone()
                 } else {
-                    Path::new(&job.base_dir).join(&ref_lib).to_string_lossy().into_owned()
+                    Path::new(&job.base_dir)
+                        .join(&ref_lib)
+                        .to_string_lossy()
+                        .into_owned()
                 };
                 let text = std::fs::read_to_string(&resolved)
                     .map_err(|e| JobError(format!("{resolved}: {e}")))?;

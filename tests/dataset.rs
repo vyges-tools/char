@@ -43,7 +43,13 @@ fn base_arc() -> Arc {
 }
 
 fn ctx() -> Ctx<'static> {
-    Ctx { corner: "tt", vdd: 1.8, temp: 25.0, slews: &SLEWS, loads: &LOADS }
+    Ctx {
+        corner: "tt",
+        vdd: 1.8,
+        temp: 25.0,
+        slews: &SLEWS,
+        loads: &LOADS,
+    }
 }
 
 #[test]
@@ -51,12 +57,25 @@ fn comb_core_tables_only_yields_four_metrics_per_grid_point() {
     let rows = dataset::rows_comb(&ctx(), std::slice::from_ref(&base_arc()));
     // 4 core tables (cell_rise/fall, rise/fall_transition) x 2x2 grid = 16.
     assert_eq!(rows.len(), 16);
-    assert!(rows.iter().all(|r| r.cell == "INV" && r.arc == "A->Y" && r.corner == "tt"));
+    assert!(rows
+        .iter()
+        .all(|r| r.cell == "INV" && r.arc == "A->Y" && r.corner == "tt"));
     // every core metric is present, nothing optional leaked in.
-    for m in ["cell_rise", "cell_fall", "rise_transition", "fall_transition"] {
-        assert_eq!(rows.iter().filter(|r| r.metric == m).count(), 4, "metric {m}");
+    for m in [
+        "cell_rise",
+        "cell_fall",
+        "rise_transition",
+        "fall_transition",
+    ] {
+        assert_eq!(
+            rows.iter().filter(|r| r.metric == m).count(),
+            4,
+            "metric {m}"
+        );
     }
-    assert!(rows.iter().all(|r| r.metric != "sigma_rise" && r.metric != "recv_c1_rise"));
+    assert!(rows
+        .iter()
+        .all(|r| r.metric != "sigma_rise" && r.metric != "recv_c1_rise"));
 }
 
 #[test]
@@ -82,13 +101,20 @@ fn optional_metrics_gate_on_characterized_data() {
     a.leakage = vec![("A".into(), 1.5), ("!A".into(), 3.0)];
     let rows = dataset::rows_comb(&ctx(), std::slice::from_ref(&a));
     assert_eq!(rows.iter().filter(|r| r.metric == "sigma_rise").count(), 4);
-    assert_eq!(rows.iter().filter(|r| r.metric == "int_rise" && r.unit == "pJ").count(), 4);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.metric == "int_rise" && r.unit == "pJ")
+            .count(),
+        4
+    );
     // has_recv emits all four recv segments (rise C1 set -> the group turns on).
     assert_eq!(rows.iter().filter(|r| r.group == "recv").count(), 16);
     // leakage is cell-level: one row per state, with the when-expr as index1.
     let leak: Vec<_> = rows.iter().filter(|r| r.metric == "leakage").collect();
     assert_eq!(leak.len(), 2);
-    assert!(leak.iter().any(|r| r.index1 == "!A" && (r.value - 3.0).abs() < 1e-12 && r.unit == "nW"));
+    assert!(leak
+        .iter()
+        .any(|r| r.index1 == "!A" && (r.value - 3.0).abs() < 1e-12 && r.unit == "nW"));
 }
 
 #[test]
@@ -107,7 +133,9 @@ fn jsonl_one_object_per_row() {
     let lines: Vec<&str> = jsonl.lines().collect();
     assert_eq!(lines.len(), 16);
     assert!(lines.iter().all(|l| l.starts_with('{') && l.ends_with('}')));
-    assert!(lines.iter().any(|l| l.contains("\"metric\":\"cell_rise\"") && l.contains("\"unit\":\"ns\"")));
+    assert!(lines
+        .iter()
+        .any(|l| l.contains("\"metric\":\"cell_rise\"") && l.contains("\"unit\":\"ns\"")));
 }
 
 #[test]
@@ -118,9 +146,15 @@ fn non_finite_value_is_blank_in_csv_null_in_json() {
     let csv = dataset::render(&rows, Format::Csv);
     // the NaN cell_rise row has an EMPTY value field and an empty (non-negative) flag:
     // `<index2>,,ns,` — i.e. ",,ns," before the newline.
-    assert!(csv.contains(",,ns,\n"), "expected blank CSV value for non-finite");
+    assert!(
+        csv.contains(",,ns,\n"),
+        "expected blank CSV value for non-finite"
+    );
     let json = dataset::render(&rows, Format::Jsonl);
-    assert!(json.contains("\"value\":null"), "expected null JSON value for non-finite");
+    assert!(
+        json.contains("\"value\":null"),
+        "expected null JSON value for non-finite"
+    );
 }
 
 #[test]
@@ -170,10 +204,18 @@ fn seq_cell_emits_ckq_and_constraints() {
         }],
     };
     let rows = dataset::rows_seq(&ctx(), &cell);
-    assert!(rows.iter().any(|r| r.metric == "ckq_rise" && r.arc == "CLK->Q"));
-    assert!(rows.iter().any(|r| r.metric == "setup_rise" && r.arc == "D vs CLK" && r.axis2 == "data_slew_ns"));
-    assert!(rows.iter().any(|r| r.metric == "async_q" && r.arc == "RST_B->Q"));
-    assert!(rows.iter().any(|r| r.metric == "recovery" && r.arc == "RST_B vs CLK"));
+    assert!(rows
+        .iter()
+        .any(|r| r.metric == "ckq_rise" && r.arc == "CLK->Q"));
+    assert!(rows
+        .iter()
+        .any(|r| r.metric == "setup_rise" && r.arc == "D vs CLK" && r.axis2 == "data_slew_ns"));
+    assert!(rows
+        .iter()
+        .any(|r| r.metric == "async_q" && r.arc == "RST_B->Q"));
+    assert!(rows
+        .iter()
+        .any(|r| r.metric == "recovery" && r.arc == "RST_B vs CLK"));
 }
 
 #[test]

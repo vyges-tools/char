@@ -5,7 +5,9 @@ use vyges_char::liberty::{render, Arc, Table, Units};
 use vyges_char::spice::deck;
 
 fn tbl(v: f64) -> Table {
-    Table { values: vec![vec![v; 2]; 2] }
+    Table {
+        values: vec![vec![v; 2]; 2],
+    }
 }
 
 #[test]
@@ -18,11 +20,24 @@ fn stddev_is_sample_stddev() {
 #[test]
 fn deck_monte_carlo_seed_and_mismatch() {
     let d = deck(
-        "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV", "A", "Y", 1.8, 0.04, 0.002, false,
-        true, Some(7),
+        "t",
+        &["inv.spice".into()],
+        &[],
+        "X1 A Y VDD VSS INV",
+        "A",
+        "Y",
+        1.8,
+        0.04,
+        0.002,
+        false,
+        true,
+        Some(7),
     );
     assert!(d.contains("set rndseed=7"), "MC run must seed the RNG");
-    assert!(d.contains(".param mc_mm_switch=1"), "MC run must enable mismatch");
+    assert!(
+        d.contains(".param mc_mm_switch=1"),
+        "MC run must enable mismatch"
+    );
 }
 
 #[test]
@@ -49,8 +64,17 @@ fn render_emits_sigma_only_when_present() {
         int_fall: Table::new(2, 2),
         leakage: vec![],
     };
-    let lib = render("x", &Units::default(), &slews, &loads, std::slice::from_ref(&a));
-    assert!(lib.contains("ocv_sigma_cell_rise"), "LVF sigma must be emitted");
+    let lib = render(
+        "x",
+        &Units::default(),
+        &slews,
+        &loads,
+        std::slice::from_ref(&a),
+    );
+    assert!(
+        lib.contains("ocv_sigma_cell_rise"),
+        "LVF sigma must be emitted"
+    );
     assert!(lib.contains("ocv_sigma_cell_fall"));
     assert!(lib.contains("sigma_type"));
     assert!(lib.contains("0.020000"), "sigma value present");
@@ -59,5 +83,8 @@ fn render_emits_sigma_only_when_present() {
     a.sigma_rise = Table::new(2, 2);
     a.sigma_fall = Table::new(2, 2);
     let lib2 = render("x", &Units::default(), &slews, &loads, &[a]);
-    assert!(!lib2.contains("ocv_sigma"), "no sigma tables when not characterized");
+    assert!(
+        !lib2.contains("ocv_sigma"),
+        "no sigma tables when not characterized"
+    );
 }

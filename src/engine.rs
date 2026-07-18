@@ -59,7 +59,10 @@ fn arc_wiring(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<String, CharE
     let netlist = std::fs::read_to_string(&job.netlist)
         .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
     let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
-        CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
+        CharError::Netlist(format!(
+            "no `.subckt {}` found in {}",
+            job.cell, job.netlist
+        ))
     })?;
     let mut nodes = Vec::with_capacity(pins.len());
     let mut sources = String::new();
@@ -68,8 +71,7 @@ fn arc_wiring(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<String, CharE
             spec.in_pin.clone()
         } else if pin.eq_ignore_ascii_case(&spec.out_pin) {
             spec.out_pin.clone()
-        } else if let Some((_, high)) =
-            spec.side.iter().find(|(p, _)| p.eq_ignore_ascii_case(pin))
+        } else if let Some((_, high)) = spec.side.iter().find(|(p, _)| p.eq_ignore_ascii_case(pin))
         {
             // hold this side input at its declared (non-controlling) logic level.
             let v = if *high { job.vdd } else { 0.0 };
@@ -143,8 +145,12 @@ fn run_point(
         String::from_utf8_lossy(&out.stderr)
     );
     let m = spice::parse_measures(&text);
-    let delay = *m.get("prop_delay").ok_or_else(|| CharError::Sim("no prop_delay".into()))?;
-    let oslew = *m.get("out_slew").ok_or_else(|| CharError::Sim("no out_slew".into()))?;
+    let delay = *m
+        .get("prop_delay")
+        .ok_or_else(|| CharError::Sim("no prop_delay".into()))?;
+    let oslew = *m
+        .get("out_slew")
+        .ok_or_else(|| CharError::Sim("no out_slew".into()))?;
     Ok((delay, oslew))
 }
 
@@ -160,8 +166,9 @@ fn run_power_arc(
     load: f64,
     rising_input: bool,
 ) -> Result<f64, CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let d = spice::deck_power_arc(
         &format!("pwr {} slew={slew} load={load}", job.cell),
         &includes,
@@ -179,9 +186,16 @@ fn run_power_arc(
 
 /// Run a leakage deck; returns the quiescent VDD current (A) at the held state.
 fn run_leakage(job: &CharJob, wiring: &str) -> Result<f64, CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
-    let d = spice::deck_leakage(&format!("leak {}", job.cell), &includes, &job.osdi, wiring, job.vdd);
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
+    let d = spice::deck_leakage(
+        &format!("leak {}", job.cell),
+        &includes,
+        &job.osdi,
+        wiring,
+        job.vdd,
+    );
     Ok(run_deck(&d, "ileak")?.0.unwrap_or(0.0))
 }
 
@@ -201,7 +215,8 @@ pub fn characterize(job: &CharJob) -> Result<Characterized, CharError> {
     if job.seq {
         if job.auto.is_some() {
             return Err(CharError::Sim(
-                "--auto is not supported for sequential cells (v1); use --sparse or a dense run".into(),
+                "--auto is not supported for sequential cells (v1); use --sparse or a dense run"
+                    .into(),
             ));
         }
         if let Some(cfg) = &job.sparse {
@@ -212,7 +227,9 @@ pub fn characterize(job: &CharJob) -> Result<Characterized, CharError> {
                         .into(),
                 ));
             }
-            return Ok(Characterized::Seq(Box::new(characterize_seq_sparse(job, cfg)?)));
+            return Ok(Characterized::Seq(Box::new(characterize_seq_sparse(
+                job, cfg,
+            )?)));
         }
         Ok(Characterized::Seq(Box::new(characterize_seq(job)?)))
     } else if let Some(cfg) = &job.auto {
@@ -233,8 +250,11 @@ pub fn characterize(job: &CharJob) -> Result<Characterized, CharError> {
             .collect::<Result<_, _>>()?;
         Ok(Characterized::Comb(arcs))
     } else {
-        let mut arcs: Vec<Arc> =
-            job.arcs.iter().map(|spec| characterize_arc(job, spec)).collect::<Result<_, _>>()?;
+        let mut arcs: Vec<Arc> = job
+            .arcs
+            .iter()
+            .map(|spec| characterize_arc(job, spec))
+            .collect::<Result<_, _>>()?;
         // Leakage is per-cell (per input state); compute once and carry it on every
         // arc (the renderer reads it from the first arc of each cell).
         if job.power_char {
@@ -270,7 +290,10 @@ fn leak_wiring(job: &CharJob, inputs: &[String], bits: usize) -> Result<String, 
     let netlist = std::fs::read_to_string(&job.netlist)
         .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
     let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
-        CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
+        CharError::Netlist(format!(
+            "no `.subckt {}` found in {}",
+            job.cell, job.netlist
+        ))
     })?;
     let mut sources = String::new();
     let mut nodes = Vec::with_capacity(pins.len());
@@ -300,8 +323,11 @@ fn characterize_leakage(job: &CharJob) -> Result<Vec<(String, f64)>, CharError> 
         return Ok(Vec::new());
     }
     let n = inputs.len();
-    let states: Vec<usize> =
-        if n <= 4 { (0..(1usize << n)).collect() } else { vec![0, (1usize << n) - 1] };
+    let states: Vec<usize> = if n <= 4 {
+        (0..(1usize << n)).collect()
+    } else {
+        vec![0, (1usize << n) - 1]
+    };
     let mut out = Vec::with_capacity(states.len());
     for bits in states {
         let wiring = leak_wiring(job, &inputs, bits)?;
@@ -310,7 +336,13 @@ fn characterize_leakage(job: &CharJob) -> Result<Vec<(String, f64)>, CharError> 
         let when = inputs
             .iter()
             .enumerate()
-            .map(|(i, p)| if (bits >> i) & 1 == 1 { p.clone() } else { format!("!{p}") })
+            .map(|(i, p)| {
+                if (bits >> i) & 1 == 1 {
+                    p.clone()
+                } else {
+                    format!("!{p}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("&");
         out.push((when, nw));
@@ -335,8 +367,9 @@ where
         return items.iter().map(&f).collect();
     }
     let next = AtomicUsize::new(0);
-    let slots: Vec<std::sync::Mutex<Option<Result<T, CharError>>>> =
-        (0..items.len()).map(|_| std::sync::Mutex::new(None)).collect();
+    let slots: Vec<std::sync::Mutex<Option<Result<T, CharError>>>> = (0..items.len())
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
     std::thread::scope(|sc| {
         for _ in 0..threads.min(items.len()) {
             sc.spawn(|| loop {
@@ -386,8 +419,12 @@ fn measure_point(
     positive: bool,
 ) -> Result<PointData, CharError> {
     // cell_rise: output rises; cell_fall: output falls.
-    let (dr, tr) = run_point(job, instance, in_pin, out_pin, slew, load, positive, true, None)?;
-    let (df, tf) = run_point(job, instance, in_pin, out_pin, slew, load, !positive, false, None)?;
+    let (dr, tr) = run_point(
+        job, instance, in_pin, out_pin, slew, load, positive, true, None,
+    )?;
+    let (df, tf) = run_point(
+        job, instance, in_pin, out_pin, slew, load, !positive, false, None,
+    )?;
 
     // LVF: Monte-Carlo over mismatch -> per-edge delay sigma (ns).
     let (mut sigma_rise, mut sigma_fall) = (0.0, 0.0);
@@ -395,8 +432,34 @@ fn measure_point(
         let mut rise = Vec::with_capacity(job.montecarlo);
         let mut fall = Vec::with_capacity(job.montecarlo);
         for k in 0..job.montecarlo as u64 {
-            rise.push(run_point(job, instance, in_pin, out_pin, slew, load, positive, true, Some(k))?.0 * 1e9);
-            fall.push(run_point(job, instance, in_pin, out_pin, slew, load, !positive, false, Some(k))?.0 * 1e9);
+            rise.push(
+                run_point(
+                    job,
+                    instance,
+                    in_pin,
+                    out_pin,
+                    slew,
+                    load,
+                    positive,
+                    true,
+                    Some(k),
+                )?
+                .0 * 1e9,
+            );
+            fall.push(
+                run_point(
+                    job,
+                    instance,
+                    in_pin,
+                    out_pin,
+                    slew,
+                    load,
+                    !positive,
+                    false,
+                    Some(k),
+                )?
+                .0 * 1e9,
+            );
         }
         sigma_rise = stddev(&rise);
         sigma_fall = stddev(&fall);
@@ -405,8 +468,12 @@ fn measure_point(
     // CCS: driver output-current waveform per edge.
     let (ccs_rise, ccs_fall) = if job.ccs {
         (
-            Some(run_ccs_point(job, instance, in_pin, out_pin, slew, load, false)?),
-            Some(run_ccs_point(job, instance, in_pin, out_pin, slew, load, true)?),
+            Some(run_ccs_point(
+                job, instance, in_pin, out_pin, slew, load, false,
+            )?),
+            Some(run_ccs_point(
+                job, instance, in_pin, out_pin, slew, load, true,
+            )?),
         )
     } else {
         (None, None)
@@ -482,7 +549,12 @@ fn characterize_arc(job: &CharJob, spec: &crate::job::ArcSpec) -> Result<Arc, Ch
         .slews
         .iter()
         .enumerate()
-        .flat_map(|(i, &s)| job.loads.iter().enumerate().map(move |(j, &l)| (i, j, s, l)))
+        .flat_map(|(i, &s)| {
+            job.loads
+                .iter()
+                .enumerate()
+                .map(move |(j, &l)| (i, j, s, l))
+        })
         .collect();
     let data = parallel_try(&pts, job.threads, |&(_, _, slew, load)| {
         measure_point(job, &instance, in_pin, out_pin, slew, load, positive)
@@ -528,8 +600,12 @@ fn measure_arc_points(
     let (in_pin, out_pin) = (spec.in_pin.as_str(), spec.out_pin.as_str());
     let positive = spec.sense == "positive_unate";
     parallel_try(pts, job.threads, |&(slew, load)| {
-        let (dr, tr) = run_point(job, &instance, in_pin, out_pin, slew, load, positive, true, None)?;
-        let (df, tf) = run_point(job, &instance, in_pin, out_pin, slew, load, !positive, false, None)?;
+        let (dr, tr) = run_point(
+            job, &instance, in_pin, out_pin, slew, load, positive, true, None,
+        )?;
+        let (df, tf) = run_point(
+            job, &instance, in_pin, out_pin, slew, load, !positive, false, None,
+        )?;
         Ok(ArcPoint {
             slew,
             load,
@@ -550,8 +626,11 @@ fn characterize_arc_sparse(
     spec: &crate::job::ArcSpec,
     cfg: &SparseCfg,
 ) -> Result<Arc, CharError> {
-    let sim_pts: Vec<(f64, f64)> =
-        cfg.sim_slews.iter().flat_map(|&s| cfg.sim_loads.iter().map(move |&l| (s, l))).collect();
+    let sim_pts: Vec<(f64, f64)> = cfg
+        .sim_slews
+        .iter()
+        .flat_map(|&s| cfg.sim_loads.iter().map(move |&l| (s, l)))
+        .collect();
     let measured = measure_arc_points(job, spec, &sim_pts)?;
     let models = ArcModels::fit(&measured, cfg.degree).ok_or_else(|| {
         CharError::Sim("surrogate fit failed (too few usable sparse points)".into())
@@ -605,7 +684,10 @@ fn verify_sparse(
     cfg: &SparseCfg,
     models: &ArcModels,
 ) -> Result<(), CharError> {
-    let near = |x: f64, xs: &[f64]| xs.iter().any(|&y| (x - y).abs() <= 1e-12 * x.abs().max(1.0));
+    let near = |x: f64, xs: &[f64]| {
+        xs.iter()
+            .any(|&y| (x - y).abs() <= 1e-12 * x.abs().max(1.0))
+    };
     let candidates: Vec<(f64, f64)> = job
         .slews
         .iter()
@@ -674,7 +756,11 @@ fn stride_idx(n: usize, m: usize) -> Vec<usize> {
 /// leave-one-out CV error is within `cfg.target_pct` (% of peak) or `cfg.max_points` are
 /// simulated. Fill the dense grid from the final surrogate, splicing the exact measured
 /// values back into the points that were actually simulated.
-fn characterize_arc_auto(job: &CharJob, spec: &crate::job::ArcSpec, cfg: &AutoCfg) -> Result<Arc, CharError> {
+fn characterize_arc_auto(
+    job: &CharJob,
+    spec: &crate::job::ArcSpec,
+    cfg: &AutoCfg,
+) -> Result<Arc, CharError> {
     let (ns, nl) = (job.slews.len(), job.loads.len());
     let coord = |i: usize, j: usize| (job.slews[i], job.loads[j]);
 
@@ -768,8 +854,9 @@ fn run_ccs_point(
     load: f64,
     rising_input: bool,
 ) -> Result<Waveform, CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let dat = std::env::temp_dir().join(format!("vyges_ccs_{pid}_{n}.dat"));
@@ -808,7 +895,13 @@ fn run_ccs_point(
     }
     // sub-sample to ~24 points; time in ns, current magnitude in mA.
     let (time, current) = subsample(&samples, 48);
-    Ok(Waveform { slew, load, ref_time: 1.0 + slew / 2.0, time, current })
+    Ok(Waveform {
+        slew,
+        load,
+        ref_time: 1.0 + slew / 2.0,
+        time,
+        current,
+    })
 }
 
 /// Characterize one CCS receiver-capacitance point: drive the input pin through a
@@ -826,8 +919,9 @@ fn run_recv_point(
     load: f64,
     rising_input: bool,
 ) -> Result<(f64, f64), CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let dat = std::env::temp_dir().join(format!("vyges_recv_{pid}_{n}.dat"));
@@ -865,8 +959,7 @@ fn run_recv_point(
         return Err(CharError::Sim("receiver waveform has < 2 points".into()));
     }
     // ramp window in seconds: starts at 1ns, 50% at 1+slew/2, ends at 1+slew.
-    let (t_start, t_mid, t_end) =
-        (1e-9, (1.0 + slew / 2.0) * 1e-9, (1.0 + slew) * 1e-9);
+    let (t_start, t_mid, t_end) = (1e-9, (1.0 + slew / 2.0) * 1e-9, (1.0 + slew) * 1e-9);
     let dv = job.vdd / 2.0; // voltage swing per segment
     let q1 = trapz_window(&samples, t_start, t_mid).abs();
     let q2 = trapz_window(&samples, t_mid, t_end).abs();
@@ -948,7 +1041,10 @@ fn seq_wiring(job: &CharJob) -> Result<String, CharError> {
     let netlist = std::fs::read_to_string(&job.netlist)
         .map_err(|e| CharError::Netlist(format!("{}: {e}", job.netlist)))?;
     let pins = spice::parse_subckt_pins(&netlist, &job.cell).ok_or_else(|| {
-        CharError::Netlist(format!("no `.subckt {}` found in {}", job.cell, job.netlist))
+        CharError::Netlist(format!(
+            "no `.subckt {}` found in {}",
+            job.cell, job.netlist
+        ))
     })?;
     let is_signal = |pin: &str| {
         job.tie.iter().any(|(p, _)| p.eq_ignore_ascii_case(pin))
@@ -996,8 +1092,9 @@ fn run_seq(
     q_rise: bool,
     ties: &[(String, bool)],
 ) -> Result<(Option<f64>, Option<f64>), CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let d = spice::deck_seq(
         &format!("seq {} clk={clk_slew}", job.cell),
         &includes,
@@ -1017,8 +1114,7 @@ fn run_seq(
         ties,
     );
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
-    let deck_path =
-        std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
+    let deck_path = std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
     std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
     let out = Command::new("ngspice")
         .arg("-b")
@@ -1035,7 +1131,10 @@ fn run_seq(
     let m = spice::parse_measures(&text);
     // a non-positive or absent ckq means the edge wasn't captured (failure).
     let ckq = m.get("ckq").copied().filter(|&v| v.is_finite() && v > 0.0);
-    let slew = m.get("q_slew").copied().filter(|&v| v.is_finite() && v > 0.0);
+    let slew = m
+        .get("q_slew")
+        .copied()
+        .filter(|&v| v.is_finite() && v > 0.0);
     Ok((ckq, slew))
 }
 
@@ -1120,7 +1219,10 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
     // Async controls held inactive during setup/hold/CK->Q: the user's tie list plus
     // the set/reset pins at their inactive (de-asserted) level (active-low -> high).
     let mut inactive_ties = job.tie.clone();
-    for (p, al) in [(&job.reset_pin, job.reset_active_low), (&job.set_pin, job.set_active_low)] {
+    for (p, al) in [
+        (&job.reset_pin, job.reset_active_low),
+        (&job.set_pin, job.set_active_low),
+    ] {
         if !p.is_empty() && !inactive_ties.iter().any(|(q, _)| q == p) {
             inactive_ties.push((p.clone(), al));
         }
@@ -1150,13 +1252,38 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         .slews
         .iter()
         .enumerate()
-        .flat_map(|(i, &cs)| job.loads.iter().enumerate().map(move |(j, &load)| (i, j, cs, load)))
+        .flat_map(|(i, &cs)| {
+            job.loads
+                .iter()
+                .enumerate()
+                .map(move |(j, &load)| (i, j, cs, load))
+        })
         .collect();
     let ckq = parallel_try(&ckq_pts, job.threads, |&(_, _, cs, load)| {
-        let (ckr, sr) =
-            run_seq(job, &wiring, cs, load, rising, 0.0, fast_data, &[(T_CAPTURE - 1.5, vdd)], true, ties)?;
-        let (ckf, sf) =
-            run_seq(job, &wiring, cs, load, rising, vdd, fast_data, &[(T_CAPTURE - 1.5, 0.0)], false, ties)?;
+        let (ckr, sr) = run_seq(
+            job,
+            &wiring,
+            cs,
+            load,
+            rising,
+            0.0,
+            fast_data,
+            &[(T_CAPTURE - 1.5, vdd)],
+            true,
+            ties,
+        )?;
+        let (ckf, sf) = run_seq(
+            job,
+            &wiring,
+            cs,
+            load,
+            rising,
+            vdd,
+            fast_data,
+            &[(T_CAPTURE - 1.5, 0.0)],
+            false,
+            ties,
+        )?;
         Ok((
             ckr.unwrap_or(0.0) * 1e9,
             ckf.unwrap_or(0.0) * 1e9,
@@ -1178,17 +1305,50 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         .slews
         .iter()
         .enumerate()
-        .flat_map(|(i, &cs)| job.slews.iter().enumerate().map(move |(k, &ds)| (i, k, cs, ds)))
+        .flat_map(|(i, &cs)| {
+            job.slews
+                .iter()
+                .enumerate()
+                .map(move |(k, &ds)| (i, k, cs, ds))
+        })
         .collect();
     let sh = parallel_try(&sh_pts, job.threads, |&(_, _, cs, ds)| {
         let setup_rise = find_constraint(
-            |sep| Ok(run_seq(job, &wiring, cs, q_load, rising, 0.0, ds, &[(T_CAPTURE - sep, vdd)], true, ties)?.0),
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    0.0,
+                    ds,
+                    &[(T_CAPTURE - sep, vdd)],
+                    true,
+                    ties,
+                )?
+                .0)
+            },
             -ds,
             3.0,
             0.10,
         )?;
         let setup_fall = find_constraint(
-            |sep| Ok(run_seq(job, &wiring, cs, q_load, rising, vdd, ds, &[(T_CAPTURE - sep, 0.0)], false, ties)?.0),
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    vdd,
+                    ds,
+                    &[(T_CAPTURE - sep, 0.0)],
+                    false,
+                    ties,
+                )?
+                .0)
+            },
             -ds,
             3.0,
             0.10,
@@ -1196,8 +1356,16 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         let hold_rise = find_constraint(
             |sep| {
                 Ok(run_seq(
-                    job, &wiring, cs, q_load, rising, 0.0, ds,
-                    &[(T_CAPTURE - 2.0, vdd), (T_CAPTURE + sep, 0.0)], true, ties,
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    0.0,
+                    ds,
+                    &[(T_CAPTURE - 2.0, vdd), (T_CAPTURE + sep, 0.0)],
+                    true,
+                    ties,
                 )?
                 .0)
             },
@@ -1208,8 +1376,16 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         let hold_fall = find_constraint(
             |sep| {
                 Ok(run_seq(
-                    job, &wiring, cs, q_load, rising, vdd, ds,
-                    &[(T_CAPTURE - 2.0, 0.0), (T_CAPTURE + sep, vdd)], false, ties,
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    vdd,
+                    ds,
+                    &[(T_CAPTURE - 2.0, 0.0), (T_CAPTURE + sep, vdd)],
+                    false,
+                    ties,
                 )?
                 .0)
             },
@@ -1236,7 +1412,11 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
         controls.push((job.set_pin.clone(), job.set_active_low, true));
     }
     for (pin, active_low, sets_high) in controls {
-        let expr = if active_low { format!("!{pin}") } else { pin.clone() };
+        let expr = if active_low {
+            format!("!{pin}")
+        } else {
+            pin.clone()
+        };
         let mut ctl = liberty::AsyncCtl {
             pin: pin.clone(),
             expr,
@@ -1248,18 +1428,27 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
             removal: Table::new(ns, ns),
         };
         // the control under test is driven, so tie everything *except* it inactive.
-        let other: Vec<(String, bool)> =
-            inactive_ties.iter().filter(|(p, _)| p != &pin).cloned().collect();
+        let other: Vec<(String, bool)> = inactive_ties
+            .iter()
+            .filter(|(p, _)| p != &pin)
+            .cloned()
+            .collect();
         // ->Q delay arc (sweep control transition x Q load) — parallel across threads.
         let aq_pts: Vec<(usize, usize, f64, f64)> = job
             .slews
             .iter()
             .enumerate()
-            .flat_map(|(i, &asl)| job.loads.iter().enumerate().map(move |(j, &load)| (i, j, asl, load)))
+            .flat_map(|(i, &asl)| {
+                job.loads
+                    .iter()
+                    .enumerate()
+                    .map(move |(j, &load)| (i, j, asl, load))
+            })
             .collect();
         let aq = parallel_try(&aq_pts, job.threads, |&(_, _, asl, load)| {
-            let (aq, sl) =
-                run_async_q(job, &wiring, &pin, active_low, sets_high, asl, load, rising, &other)?;
+            let (aq, sl) = run_async_q(
+                job, &wiring, &pin, active_low, sets_high, asl, load, rising, &other,
+            )?;
             Ok((aq.unwrap_or(0.0) * 1e9, sl.unwrap_or(0.0) * 1e9))
         })?;
         for (&(i, j, _, _), &(q, qt)) in aq_pts.iter().zip(&aq) {
@@ -1277,13 +1466,19 @@ fn characterize_seq(job: &CharJob) -> Result<liberty::SeqCell, CharError> {
             .slews
             .iter()
             .enumerate()
-            .flat_map(|(i, &cs)| job.slews.iter().enumerate().map(move |(k, &asl)| (i, k, cs, asl)))
+            .flat_map(|(i, &cs)| {
+                job.slews
+                    .iter()
+                    .enumerate()
+                    .map(move |(k, &asl)| (i, k, cs, asl))
+            })
             .collect();
         let rr = parallel_try(&rr_pts, job.threads, |&(_, _, cs, asl)| {
             find_release_boundary(
                 |rel| {
                     run_async_constraint(
-                        job, &wiring, &pin, active_low, sets_high, cs, asl, q_load, rising, rel, &other,
+                        job, &wiring, &pin, active_low, sets_high, cs, asl, q_load, rising, rel,
+                        &other,
                     )
                 },
                 T_CAPTURE - 2.0,
@@ -1321,13 +1516,35 @@ fn characterize_seq_sparse(job: &CharJob, cfg: &SparseCfg) -> Result<liberty::Se
     let (ss, sld) = (&cfg.sim_slews, &cfg.sim_loads);
 
     // CK->Q coarse grid (clock slew × Q load).
-    let ckq_pts: Vec<(f64, f64)> =
-        ss.iter().flat_map(|&cs| sld.iter().map(move |&load| (cs, load))).collect();
+    let ckq_pts: Vec<(f64, f64)> = ss
+        .iter()
+        .flat_map(|&cs| sld.iter().map(move |&load| (cs, load)))
+        .collect();
     let ckq = parallel_try(&ckq_pts, job.threads, |&(cs, load)| {
-        let (ckr, sr) =
-            run_seq(job, &wiring, cs, load, rising, 0.0, fast_data, &[(T_CAPTURE - 1.5, vdd)], true, ties)?;
-        let (ckf, sf) =
-            run_seq(job, &wiring, cs, load, rising, vdd, fast_data, &[(T_CAPTURE - 1.5, 0.0)], false, ties)?;
+        let (ckr, sr) = run_seq(
+            job,
+            &wiring,
+            cs,
+            load,
+            rising,
+            0.0,
+            fast_data,
+            &[(T_CAPTURE - 1.5, vdd)],
+            true,
+            ties,
+        )?;
+        let (ckf, sf) = run_seq(
+            job,
+            &wiring,
+            cs,
+            load,
+            rising,
+            vdd,
+            fast_data,
+            &[(T_CAPTURE - 1.5, 0.0)],
+            false,
+            ties,
+        )?;
         Ok((
             cs,
             load,
@@ -1341,28 +1558,122 @@ fn characterize_seq_sparse(job: &CharJob, cfg: &SparseCfg) -> Result<liberty::Se
     let ckq_col = |f: fn(&Row6) -> f64| -> Vec<(f64, f64, f64)> {
         ckq.iter().map(|p| (p.0, p.1, f(p))).collect()
     };
-    let ckq_rise = crate::sparse::fill_one(&ckq_col(|p| p.2), &job.slews, &job.loads, cfg.degree, true).ok_or_else(seq_fit_err)?;
-    let ckq_fall = crate::sparse::fill_one(&ckq_col(|p| p.3), &job.slews, &job.loads, cfg.degree, true).ok_or_else(seq_fit_err)?;
-    let ckq_rise_trans = crate::sparse::fill_one(&ckq_col(|p| p.4), &job.slews, &job.loads, cfg.degree, true).ok_or_else(seq_fit_err)?;
-    let ckq_fall_trans = crate::sparse::fill_one(&ckq_col(|p| p.5), &job.slews, &job.loads, cfg.degree, true).ok_or_else(seq_fit_err)?;
+    let ckq_rise =
+        crate::sparse::fill_one(&ckq_col(|p| p.2), &job.slews, &job.loads, cfg.degree, true)
+            .ok_or_else(seq_fit_err)?;
+    let ckq_fall =
+        crate::sparse::fill_one(&ckq_col(|p| p.3), &job.slews, &job.loads, cfg.degree, true)
+            .ok_or_else(seq_fit_err)?;
+    let ckq_rise_trans =
+        crate::sparse::fill_one(&ckq_col(|p| p.4), &job.slews, &job.loads, cfg.degree, true)
+            .ok_or_else(seq_fit_err)?;
+    let ckq_fall_trans =
+        crate::sparse::fill_one(&ckq_col(|p| p.5), &job.slews, &job.loads, cfg.degree, true)
+            .ok_or_else(seq_fit_err)?;
 
     // setup/hold coarse grid (clock slew × data slew); values may be negative -> linear fit.
-    let sh_pts: Vec<(f64, f64)> =
-        ss.iter().flat_map(|&cs| ss.iter().map(move |&ds| (cs, ds))).collect();
+    let sh_pts: Vec<(f64, f64)> = ss
+        .iter()
+        .flat_map(|&cs| ss.iter().map(move |&ds| (cs, ds)))
+        .collect();
     let sh = parallel_try(&sh_pts, job.threads, |&(cs, ds)| {
-        let sr = find_constraint(|sep| Ok(run_seq(job, &wiring, cs, q_load, rising, 0.0, ds, &[(T_CAPTURE - sep, vdd)], true, ties)?.0), -ds, 3.0, 0.10)?;
-        let sf = find_constraint(|sep| Ok(run_seq(job, &wiring, cs, q_load, rising, vdd, ds, &[(T_CAPTURE - sep, 0.0)], false, ties)?.0), -ds, 3.0, 0.10)?;
-        let hr = find_constraint(|sep| Ok(run_seq(job, &wiring, cs, q_load, rising, 0.0, ds, &[(T_CAPTURE - 2.0, vdd), (T_CAPTURE + sep, 0.0)], true, ties)?.0), -1.8, 3.0, 0.10)?;
-        let hf = find_constraint(|sep| Ok(run_seq(job, &wiring, cs, q_load, rising, vdd, ds, &[(T_CAPTURE - 2.0, 0.0), (T_CAPTURE + sep, vdd)], false, ties)?.0), -1.8, 3.0, 0.10)?;
+        let sr = find_constraint(
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    0.0,
+                    ds,
+                    &[(T_CAPTURE - sep, vdd)],
+                    true,
+                    ties,
+                )?
+                .0)
+            },
+            -ds,
+            3.0,
+            0.10,
+        )?;
+        let sf = find_constraint(
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    vdd,
+                    ds,
+                    &[(T_CAPTURE - sep, 0.0)],
+                    false,
+                    ties,
+                )?
+                .0)
+            },
+            -ds,
+            3.0,
+            0.10,
+        )?;
+        let hr = find_constraint(
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    0.0,
+                    ds,
+                    &[(T_CAPTURE - 2.0, vdd), (T_CAPTURE + sep, 0.0)],
+                    true,
+                    ties,
+                )?
+                .0)
+            },
+            -1.8,
+            3.0,
+            0.10,
+        )?;
+        let hf = find_constraint(
+            |sep| {
+                Ok(run_seq(
+                    job,
+                    &wiring,
+                    cs,
+                    q_load,
+                    rising,
+                    vdd,
+                    ds,
+                    &[(T_CAPTURE - 2.0, 0.0), (T_CAPTURE + sep, vdd)],
+                    false,
+                    ties,
+                )?
+                .0)
+            },
+            -1.8,
+            3.0,
+            0.10,
+        )?;
         Ok((cs, ds, sr, sf, hr, hf))
     })?;
     let sh_col = |f: fn(&Row6) -> f64| -> Vec<(f64, f64, f64)> {
         sh.iter().map(|p| (p.0, p.1, f(p))).collect()
     };
-    let setup_rise = crate::sparse::fill_one(&sh_col(|p| p.2), &job.slews, &job.slews, cfg.degree, false).ok_or_else(seq_fit_err)?;
-    let setup_fall = crate::sparse::fill_one(&sh_col(|p| p.3), &job.slews, &job.slews, cfg.degree, false).ok_or_else(seq_fit_err)?;
-    let hold_rise = crate::sparse::fill_one(&sh_col(|p| p.4), &job.slews, &job.slews, cfg.degree, false).ok_or_else(seq_fit_err)?;
-    let hold_fall = crate::sparse::fill_one(&sh_col(|p| p.5), &job.slews, &job.slews, cfg.degree, false).ok_or_else(seq_fit_err)?;
+    let setup_rise =
+        crate::sparse::fill_one(&sh_col(|p| p.2), &job.slews, &job.slews, cfg.degree, false)
+            .ok_or_else(seq_fit_err)?;
+    let setup_fall =
+        crate::sparse::fill_one(&sh_col(|p| p.3), &job.slews, &job.slews, cfg.degree, false)
+            .ok_or_else(seq_fit_err)?;
+    let hold_rise =
+        crate::sparse::fill_one(&sh_col(|p| p.4), &job.slews, &job.slews, cfg.degree, false)
+            .ok_or_else(seq_fit_err)?;
+    let hold_fall =
+        crate::sparse::fill_one(&sh_col(|p| p.5), &job.slews, &job.slews, cfg.degree, false)
+            .ok_or_else(seq_fit_err)?;
 
     eprintln!(
         "sparse seq {}: CK->Q {} of {} pts, setup/hold {} of {} pts",
@@ -1404,8 +1715,9 @@ fn run_async_q(
     rising_clock: bool,
     ties: &[(String, bool)],
 ) -> Result<(Option<f64>, Option<f64>), CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let d = spice::deck_async_q(
         &format!("aq {} as={async_slew}", job.cell),
         &includes,
@@ -1445,8 +1757,9 @@ fn run_async_constraint(
     release_50: f64,
     ties: &[(String, bool)],
 ) -> Result<Option<f64>, CharError> {
-    let includes: Vec<String> =
-        std::iter::once(job.netlist.clone()).chain(job.models.iter().cloned()).collect();
+    let includes: Vec<String> = std::iter::once(job.netlist.clone())
+        .chain(job.models.iter().cloned())
+        .collect();
     let d = spice::deck_async_constraint(
         &format!("rr {} rel={release_50}", job.cell),
         &includes,
@@ -1488,7 +1801,10 @@ fn run_deck(deck: &str, key: &str) -> Result<(Option<f64>, Option<f64>), CharErr
     );
     let m = spice::parse_measures(&text);
     let primary = m.get(key).copied().filter(|v| v.is_finite());
-    let slew = m.get("q_slew").copied().filter(|&v| v.is_finite() && v > 0.0);
+    let slew = m
+        .get("q_slew")
+        .copied()
+        .filter(|&v| v.is_finite() && v > 0.0);
     Ok((primary, slew))
 }
 
@@ -1521,7 +1837,13 @@ fn render_result(
 /// Full run: characterize and render a `.lib` (single default corner).
 pub fn run_to_lib(job: &CharJob) -> Result<String, CharError> {
     let lib = format!("{}_char", job.cell);
-    Ok(render_result(job, &lib, &Units::default(), &characterize(job)?, false))
+    Ok(render_result(
+        job,
+        &lib,
+        &Units::default(),
+        &characterize(job)?,
+        false,
+    ))
 }
 
 /// A characterized result for one PVT corner, with the corner's identity and
@@ -1556,7 +1878,12 @@ pub fn characterize_corners(job: &CharJob) -> Result<Vec<CornerResult>, CharErro
         jc.temp = c.temp;
         jc.corners = Vec::new(); // avoid recursion if anyone re-enters
         let result = characterize(&jc)?;
-        out.push(CornerResult { name: c.name.clone(), vdd: c.vdd, temp: c.temp, result });
+        out.push(CornerResult {
+            name: c.name.clone(),
+            vdd: c.vdd,
+            temp: c.temp,
+            result,
+        });
     }
     Ok(out)
 }
@@ -1571,13 +1898,20 @@ pub fn run_corners(job: &CharJob, json: bool) -> Result<Vec<(String, String)>, C
         let mut jc = job.clone();
         jc.vdd = cr.vdd;
         jc.temp = cr.temp;
-        let units = Units { nom_voltage: cr.vdd, nom_temp: cr.temp, ..Units::default() };
+        let units = Units {
+            nom_voltage: cr.vdd,
+            nom_temp: cr.temp,
+            ..Units::default()
+        };
         let libname = if cr.name.is_empty() {
             format!("{}_char", job.cell)
         } else {
             format!("{}__{}", job.cell, cr.name)
         };
-        out.push((cr.name.clone(), render_result(&jc, &libname, &units, &cr.result, json)));
+        out.push((
+            cr.name.clone(),
+            render_result(&jc, &libname, &units, &cr.result, json),
+        ));
     }
     Ok(out)
 }

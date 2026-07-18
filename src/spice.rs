@@ -133,7 +133,10 @@ pub fn deck_ccs(
     }
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
-    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(&format!(
+        "VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n",
+        1.0 + ramp_ns(slew_ns)
+    ));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
         s.push('\n');
@@ -185,7 +188,10 @@ pub fn deck_recv(
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
     // Drive a source node; a 0 V sense source carries all the input-pin current.
-    s.push_str(&format!("VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(&format!(
+        "VIN in_src 0 PWL(0 {v0} 1n {v0} {}n {v1})\n",
+        1.0 + ramp_ns(slew_ns)
+    ));
     s.push_str(&format!("Vsin in_src {in_pin} 0\n"));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
@@ -238,7 +244,10 @@ pub fn deck_power_arc(
     }
     s.push_str(&format!("VVDD VDD 0 {vdd}\n"));
     s.push_str("VVSS VSS 0 0\n");
-    s.push_str(&format!("VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n", 1.0 + ramp_ns(slew_ns)));
+    s.push_str(&format!(
+        "VIN {in_pin} 0 PWL(0 {v0} 1n {v0} {}n {v1})\n",
+        1.0 + ramp_ns(slew_ns)
+    ));
     s.push_str(subckt_call);
     if !subckt_call.ends_with('\n') {
         s.push('\n');
@@ -246,7 +255,9 @@ pub fn deck_power_arc(
     s.push_str(&format!("CL {out_pin} 0 {load_pf}p\n"));
     let tstop = 1.0 + ramp_ns(slew_ns) + 4.0;
     s.push_str(&format!(".tran 1p {tstop}n\n"));
-    s.push_str(&format!(".measure tran qvdd INTEG i(VVDD) FROM=0.9n TO={tstop}n\n"));
+    s.push_str(&format!(
+        ".measure tran qvdd INTEG i(VVDD) FROM=0.9n TO={tstop}n\n"
+    ));
     s.push_str(".end\n");
     s
 }
@@ -353,7 +364,10 @@ pub fn deck_seq(
         pwl(vdd, cs, &[(2.0, 0.0), (4.0, vdd), (8.0, 0.0)])
     };
     s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
-    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(data_init, data_slew, data_edges)));
+    s.push_str(&format!(
+        "VD ds 0 {}\nRD ds {data_pin} 1\n",
+        pwl(data_init, data_slew, data_edges)
+    ));
     // async controls (set/reset) held inactive at their declared levels, also through R.
     s.push_str(&tie_sources(ties, vdd));
     s.push_str(subckt_call);
@@ -433,7 +447,10 @@ pub fn deck_async_q(
         pwl(vdd, clk_slew, &[(2.0, 0.0), (4.0, vdd)])
     };
     s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
-    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(prime, clk_slew, &[])));
+    s.push_str(&format!(
+        "VD ds 0 {}\nRD ds {data_pin} 1\n",
+        pwl(prime, clk_slew, &[])
+    ));
     let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
     s.push_str(&format!(
         "VASY asys 0 {}\nRASY asys {async_pin} 1\n",
@@ -508,7 +525,10 @@ pub fn deck_async_constraint(
     s.push_str(&format!("VCK cks 0 {ck_pwl}\nRCK cks {clock_pin} 1\n"));
     // capture value = opposite of the async-forced value, so a capture is visible.
     let cap = if sets_high { 0.0 } else { vdd };
-    s.push_str(&format!("VD ds 0 {}\nRD ds {data_pin} 1\n", pwl(cap, clk_slew, &[])));
+    s.push_str(&format!(
+        "VD ds 0 {}\nRD ds {data_pin} 1\n",
+        pwl(cap, clk_slew, &[])
+    ));
     // async asserted from t=0, released (active->inactive) at release_50.
     let (inactive, active) = if active_low { (vdd, 0.0) } else { (0.0, vdd) };
     s.push_str(&format!(
@@ -522,7 +542,9 @@ pub fn deck_async_constraint(
     }
     s.push_str(&format!("CL {out_pin} 0 {q_load}p\n"));
     s.push_str(".tran 2p 11n\n");
-    s.push_str(&format!(".measure tran qfinal FIND v({out_pin}) AT=10.5n\n"));
+    s.push_str(&format!(
+        ".measure tran qfinal FIND v({out_pin}) AT=10.5n\n"
+    ));
     s.push_str(".end\n");
     s
 }

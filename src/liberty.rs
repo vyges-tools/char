@@ -13,7 +13,9 @@ pub struct Table {
 
 impl Table {
     pub fn new(rows: usize, cols: usize) -> Table {
-        Table { values: vec![vec![0.0; cols]; rows] }
+        Table {
+            values: vec![vec![0.0; cols]; rows],
+        }
     }
     /// True if any entry is non-zero — gates whether a sigma table is emitted.
     pub fn any_nonzero(&self) -> bool {
@@ -46,8 +48,8 @@ pub struct Arc {
     pub cell_fall: Table,
     pub rise_transition: Table,
     pub fall_transition: Table,
-    pub sigma_rise: Table, // LVF: 1-sigma of cell_rise delay (ns)
-    pub sigma_fall: Table, // LVF: 1-sigma of cell_fall delay (ns)
+    pub sigma_rise: Table,       // LVF: 1-sigma of cell_rise delay (ns)
+    pub sigma_fall: Table,       // LVF: 1-sigma of cell_fall delay (ns)
     pub ccs_rise: Vec<Waveform>, // CCS output_current_rise, one per (slew,load)
     pub ccs_fall: Vec<Waveform>, // CCS output_current_fall
     // CCS receiver capacitance on `in_pin` (pF): the two-segment input-pin load a
@@ -89,7 +91,11 @@ impl Arc {
                     n += 1;
                 }
             }
-            if n == 0 { 0.0 } else { sum / n as f64 }
+            if n == 0 {
+                0.0
+            } else {
+                sum / n as f64
+            }
         };
         (mean(&self.recv_c1_rise) + mean(&self.recv_c1_fall)) / 2.0
     }
@@ -134,11 +140,11 @@ pub struct AsyncCtl {
 
 #[derive(Debug, Clone)]
 pub struct Units {
-    pub time: String,        // e.g. "1ns"
-    pub cap: String,         // e.g. "1pf"
-    pub voltage: String,     // e.g. "1V"
-    pub nom_voltage: f64,    // nominal supply for this corner (lib header)
-    pub nom_temp: f64,       // nominal temperature for this corner (lib header)
+    pub time: String,     // e.g. "1ns"
+    pub cap: String,      // e.g. "1pf"
+    pub voltage: String,  // e.g. "1V"
+    pub nom_voltage: f64, // nominal supply for this corner (lib header)
+    pub nom_temp: f64,    // nominal temperature for this corner (lib header)
 }
 
 impl Default for Units {
@@ -154,11 +160,17 @@ impl Default for Units {
 }
 
 fn fmt_index(vals: &[f64]) -> String {
-    vals.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", ")
+    vals.iter()
+        .map(|v| format!("{v}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn fmt_csv(vals: &[f64]) -> String {
-    vals.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join(", ")
+    vals.iter()
+        .map(|v| format!("{v:.6}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn fmt_table(t: &Table, indent: &str) -> String {
@@ -166,7 +178,11 @@ fn fmt_table(t: &Table, indent: &str) -> String {
         .values
         .iter()
         .map(|row| {
-            let cells = row.iter().map(|v| format!("{v:.6}")).collect::<Vec<_>>().join(", ");
+            let cells = row
+                .iter()
+                .map(|v| format!("{v:.6}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("{indent}    \"{cells}\"")
         })
         .collect();
@@ -176,7 +192,10 @@ fn fmt_table(t: &Table, indent: &str) -> String {
 /// Machine-readable characterization summary (std-only, no deps).
 pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) -> String {
     let arr = |v: &[f64]| {
-        v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",")
+        v.iter()
+            .map(|x| format!("{x:.6}"))
+            .collect::<Vec<_>>()
+            .join(",")
     };
     let table = |t: &Table| {
         t.values
@@ -187,7 +206,11 @@ pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) ->
     };
     let mut s = String::new();
     s.push_str(&format!("{{\"library\":{library:?},"));
-    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str(&format!(
+        "\"slews\":[{}],\"loads\":[{}],",
+        arr(slews),
+        arr(loads)
+    ));
     s.push_str("\"arcs\":[");
     for (i, a) in arcs.iter().enumerate() {
         if i > 0 {
@@ -199,8 +222,14 @@ pub fn render_json(library: &str, slews: &[f64], loads: &[f64], arcs: &[Arc]) ->
         ));
         s.push_str(&format!("\"cell_rise\":[{}],", table(&a.cell_rise)));
         s.push_str(&format!("\"cell_fall\":[{}],", table(&a.cell_fall)));
-        s.push_str(&format!("\"rise_transition\":[{}],", table(&a.rise_transition)));
-        s.push_str(&format!("\"fall_transition\":[{}]}}", table(&a.fall_transition)));
+        s.push_str(&format!(
+            "\"rise_transition\":[{}],",
+            table(&a.rise_transition)
+        ));
+        s.push_str(&format!(
+            "\"fall_transition\":[{}]}}",
+            table(&a.fall_transition)
+        ));
     }
     s.push_str("]}\n");
     s
@@ -228,24 +257,24 @@ fn cap_unit(cap: &str) -> &str {
 }
 
 /// Render a complete single-library `.lib` for the given arcs.
-pub fn render(
-    library: &str,
-    units: &Units,
-    slews: &[f64],
-    loads: &[f64],
-    arcs: &[Arc],
-) -> String {
+pub fn render(library: &str, units: &Units, slews: &[f64], loads: &[f64], arcs: &[Arc]) -> String {
     let tmpl = "vyges_nldm";
     let mut s = String::new();
     s.push_str(&format!("library ({library}) {{\n"));
     s.push_str("  delay_model : table_lookup;\n");
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
-    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
+    s.push_str(&format!(
+        "  capacitive_load_unit (1, {});\n",
+        cap_unit(&units.cap)
+    ));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
     if arcs.iter().any(|a| !a.leakage.is_empty()) {
         s.push_str("  leakage_power_unit : \"1nW\";\n");
     }
-    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(&format!(
+        "  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n",
+        units.nom_temp, units.nom_voltage
+    ));
     s.push_str(THRESHOLDS);
     s.push('\n');
 
@@ -258,7 +287,10 @@ pub fn render(
     s.push_str("  }\n\n");
 
     // CCS time-vector template (declared only if any arc carries current waveforms).
-    if arcs.iter().any(|a| !a.ccs_rise.is_empty() || !a.ccs_fall.is_empty()) {
+    if arcs
+        .iter()
+        .any(|a| !a.ccs_rise.is_empty() || !a.ccs_fall.is_empty())
+    {
         s.push_str("  lu_table_template (ccs_tmpl) {\n");
         s.push_str("    variable_1 : input_net_transition;\n");
         s.push_str("    variable_2 : total_output_net_capacitance;\n");
@@ -306,7 +338,10 @@ pub fn render(
                 continue;
             }
             seen_out.push(&a.out_pin);
-            s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", a.out_pin));
+            s.push_str(&format!(
+                "    pin ({}) {{\n      direction : output;\n",
+                a.out_pin
+            ));
             for b in cell_arcs.iter().filter(|b| b.out_pin == a.out_pin) {
                 emit_timing(&mut s, b, tmpl, slews, loads);
             }
@@ -322,7 +357,10 @@ pub fn render(
 /// characterized, in which case add the conventional `capacitance` + CCS receiver model.
 fn emit_input_pin(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f64]) {
     if arc.has_recv() {
-        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", arc.in_pin));
+        s.push_str(&format!(
+            "    pin ({}) {{\n      direction : input;\n",
+            arc.in_pin
+        ));
         s.push_str(&format!("      capacitance : {:.6};\n", arc.nominal_cap()));
         s.push_str("      receiver_capacitance () {\n");
         for (name, t) in [
@@ -340,7 +378,10 @@ fn emit_input_pin(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &
         }
         s.push_str("      }\n    }\n");
     } else {
-        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n    }}\n", arc.in_pin));
+        s.push_str(&format!(
+            "    pin ({}) {{\n      direction : input;\n    }}\n",
+            arc.in_pin
+        ));
     }
 }
 
@@ -364,9 +405,10 @@ fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f6
     }
     // LVF: per-(slew,load) delay sigma tables, emitted only when characterized.
     if arc.sigma_rise.any_nonzero() || arc.sigma_fall.any_nonzero() {
-        for (name, t) in
-            [("ocv_sigma_cell_rise", &arc.sigma_rise), ("ocv_sigma_cell_fall", &arc.sigma_fall)]
-        {
+        for (name, t) in [
+            ("ocv_sigma_cell_rise", &arc.sigma_rise),
+            ("ocv_sigma_cell_fall", &arc.sigma_fall),
+        ] {
             s.push_str(&format!("        {name} ({tmpl}) {{\n"));
             s.push_str("          sigma_type : \"early_and_late\";\n");
             s.push_str(&format!("          index_1 (\"{}\");\n", fmt_index(slews)));
@@ -377,20 +419,30 @@ fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f6
         }
     }
     // CCS: output-current waveforms (one `vector` per (slew,load) grid point).
-    for (group, wfs) in
-        [("output_current_rise", &arc.ccs_rise), ("output_current_fall", &arc.ccs_fall)]
-    {
+    for (group, wfs) in [
+        ("output_current_rise", &arc.ccs_rise),
+        ("output_current_fall", &arc.ccs_fall),
+    ] {
         if wfs.is_empty() {
             continue;
         }
         s.push_str(&format!("        {group} () {{\n"));
         for w in wfs {
             s.push_str("          vector (ccs_tmpl) {\n");
-            s.push_str(&format!("            reference_time : {:.6};\n", w.ref_time));
+            s.push_str(&format!(
+                "            reference_time : {:.6};\n",
+                w.ref_time
+            ));
             s.push_str(&format!("            index_1 (\"{:.6}\");\n", w.slew));
             s.push_str(&format!("            index_2 (\"{:.6}\");\n", w.load));
-            s.push_str(&format!("            index_3 (\"{}\");\n", fmt_csv(&w.time)));
-            s.push_str(&format!("            values (\"{}\");\n", fmt_csv(&w.current)));
+            s.push_str(&format!(
+                "            index_3 (\"{}\");\n",
+                fmt_csv(&w.time)
+            ));
+            s.push_str(&format!(
+                "            values (\"{}\");\n",
+                fmt_csv(&w.current)
+            ));
             s.push_str("          }\n");
         }
         s.push_str("        }\n");
@@ -401,8 +453,14 @@ fn emit_timing(s: &mut String, arc: &Arc, tmpl: &str, slews: &[f64], loads: &[f6
         s.push_str(&format!("          related_pin : \"{}\";\n", arc.in_pin));
         for (name, t) in [("rise_power", &arc.int_rise), ("fall_power", &arc.int_fall)] {
             s.push_str(&format!("          {name} ({tmpl}) {{\n"));
-            s.push_str(&format!("            index_1 (\"{}\");\n", fmt_index(slews)));
-            s.push_str(&format!("            index_2 (\"{}\");\n", fmt_index(loads)));
+            s.push_str(&format!(
+                "            index_1 (\"{}\");\n",
+                fmt_index(slews)
+            ));
+            s.push_str(&format!(
+                "            index_2 (\"{}\");\n",
+                fmt_index(loads)
+            ));
             s.push_str("            values ( \\\n");
             s.push_str(&fmt_table(t, "          "));
             s.push_str(" );\n          }\n");
@@ -430,9 +488,15 @@ pub fn render_seq(
     s.push_str(&format!("library ({library}) {{\n"));
     s.push_str("  delay_model : table_lookup;\n");
     s.push_str(&format!("  time_unit : \"{}\";\n", units.time));
-    s.push_str(&format!("  capacitive_load_unit (1, {});\n", cap_unit(&units.cap)));
+    s.push_str(&format!(
+        "  capacitive_load_unit (1, {});\n",
+        cap_unit(&units.cap)
+    ));
     s.push_str(&format!("  voltage_unit : \"{}\";\n", units.voltage));
-    s.push_str(&format!("  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n", units.nom_temp, units.nom_voltage));
+    s.push_str(&format!(
+        "  nom_process : 1.0;\n  nom_temperature : {:.1};\n  nom_voltage : {:.4};\n",
+        units.nom_temp, units.nom_voltage
+    ));
     s.push_str(THRESHOLDS);
     s.push('\n');
 
@@ -475,12 +539,22 @@ pub fn render_seq(
     s.push_str("    }\n");
 
     // clock pin
-    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n      clock : true;\n    }}\n", cell.clock_pin));
+    s.push_str(&format!(
+        "    pin ({}) {{\n      direction : input;\n      clock : true;\n    }}\n",
+        cell.clock_pin
+    ));
 
     // async set/reset pins
-    let edge = if cell.rising_edge { "rising" } else { "falling" };
+    let edge = if cell.rising_edge {
+        "rising"
+    } else {
+        "falling"
+    };
     for a in &cell.asyncs {
-        s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", a.pin));
+        s.push_str(&format!(
+            "    pin ({}) {{\n      direction : input;\n",
+            a.pin
+        ));
         // recovery/removal constraints vs the clock (de-assert timing)
         for (kind, t) in [("recovery", &a.recovery), ("removal", &a.removal)] {
             if !t.any_nonzero() {
@@ -490,7 +564,11 @@ pub fn render_seq(
             s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
             s.push_str(&format!("        timing_type : {kind}_{edge};\n"));
             // constrain the async pin's de-assert edge: rising for active-low controls.
-            let cname = if a.active_low { "rise_constraint" } else { "fall_constraint" };
+            let cname = if a.active_low {
+                "rise_constraint"
+            } else {
+                "fall_constraint"
+            };
             named(&mut s, cname, cons, slews, slews, t);
             s.push_str("      }\n"); // close the recovery/removal timing() group
         }
@@ -498,7 +576,10 @@ pub fn render_seq(
     }
 
     // data pin: setup + hold constraint groups (rise/fall constraints)
-    s.push_str(&format!("    pin ({}) {{\n      direction : input;\n", cell.data_pin));
+    s.push_str(&format!(
+        "    pin ({}) {{\n      direction : input;\n",
+        cell.data_pin
+    ));
     for (ty, rise, fall) in [
         (format!("setup_{edge}"), &cell.setup_rise, &cell.setup_fall),
         (format!("hold_{edge}"), &cell.hold_rise, &cell.hold_fall),
@@ -513,14 +594,31 @@ pub fn render_seq(
     s.push_str("    }\n");
 
     // Q pin: CK->Q delay arc (edge-triggered)
-    s.push_str(&format!("    pin ({}) {{\n      direction : output;\n", cell.out_pin));
+    s.push_str(&format!(
+        "    pin ({}) {{\n      direction : output;\n",
+        cell.out_pin
+    ));
     s.push_str("      timing () {\n");
     s.push_str(&format!("        related_pin : \"{}\";\n", cell.clock_pin));
     s.push_str(&format!("        timing_type : {edge}_edge;\n"));
     named(&mut s, "cell_rise", nldm, slews, loads, &cell.ckq_rise);
     named(&mut s, "cell_fall", nldm, slews, loads, &cell.ckq_fall);
-    named(&mut s, "rise_transition", nldm, slews, loads, &cell.ckq_rise_trans);
-    named(&mut s, "fall_transition", nldm, slews, loads, &cell.ckq_fall_trans);
+    named(
+        &mut s,
+        "rise_transition",
+        nldm,
+        slews,
+        loads,
+        &cell.ckq_rise_trans,
+    );
+    named(
+        &mut s,
+        "fall_transition",
+        nldm,
+        slews,
+        loads,
+        &cell.ckq_fall_trans,
+    );
     s.push_str("      }\n");
     // async control -> Q delay arc: set (preset) drives Q high, reset (clear) low.
     for a in &cell.asyncs {
@@ -548,17 +646,33 @@ pub fn render_seq(
 
 /// Machine-readable summary of a characterized sequential cell (std-only, no deps).
 pub fn render_seq_json(library: &str, slews: &[f64], loads: &[f64], cell: &SeqCell) -> String {
-    let arr = |v: &[f64]| v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",");
+    let arr = |v: &[f64]| {
+        v.iter()
+            .map(|x| format!("{x:.6}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     let table = |t: &Table| {
-        t.values.iter().map(|row| format!("[{}]", arr(row))).collect::<Vec<_>>().join(",")
+        t.values
+            .iter()
+            .map(|row| format!("[{}]", arr(row)))
+            .collect::<Vec<_>>()
+            .join(",")
     };
     let mut s = String::new();
-    s.push_str(&format!("{{\"library\":{library:?},\"cell\":{:?},", cell.cell));
+    s.push_str(&format!(
+        "{{\"library\":{library:?},\"cell\":{:?},",
+        cell.cell
+    ));
     s.push_str(&format!(
         "\"clock_pin\":{:?},\"data_pin\":{:?},\"out_pin\":{:?},\"rising_edge\":{},",
         cell.clock_pin, cell.data_pin, cell.out_pin, cell.rising_edge
     ));
-    s.push_str(&format!("\"slews\":[{}],\"loads\":[{}],", arr(slews), arr(loads)));
+    s.push_str(&format!(
+        "\"slews\":[{}],\"loads\":[{}],",
+        arr(slews),
+        arr(loads)
+    ));
     s.push_str(&format!("\"setup_rise\":[{}],", table(&cell.setup_rise)));
     s.push_str(&format!("\"setup_fall\":[{}],", table(&cell.setup_fall)));
     s.push_str(&format!("\"hold_rise\":[{}],", table(&cell.hold_rise)));

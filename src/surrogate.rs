@@ -40,8 +40,16 @@ impl Poly2 {
         }
         let (s_min, s_max) = min_max(points.iter().map(|p| p.0));
         let (l_min, l_max) = min_max(points.iter().map(|p| p.1));
-        let s_span = if (s_max - s_min).abs() < f64::EPSILON { 1.0 } else { s_max - s_min };
-        let l_span = if (l_max - l_min).abs() < f64::EPSILON { 1.0 } else { l_max - l_min };
+        let s_span = if (s_max - s_min).abs() < f64::EPSILON {
+            1.0
+        } else {
+            s_max - s_min
+        };
+        let l_span = if (l_max - l_min).abs() < f64::EPSILON {
+            1.0
+        } else {
+            l_max - l_min
+        };
 
         // Normal equations A^T A c = A^T y, accumulated point-by-point.
         let mut ata = vec![vec![0.0f64; nt]; nt];
@@ -56,12 +64,25 @@ impl Poly2 {
             }
         }
         let coeffs = solve(ata, aty)?;
-        Some(Poly2 { deg_s, deg_l, s_min, s_span, l_min, l_span, coeffs })
+        Some(Poly2 {
+            deg_s,
+            deg_l,
+            s_min,
+            s_span,
+            l_min,
+            l_span,
+            coeffs,
+        })
     }
 
     /// Predict the value at raw `(s, l)`.
     pub fn predict(&self, s: f64, l: f64) -> f64 {
-        let phi = basis((s - self.s_min) / self.s_span, (l - self.l_min) / self.l_span, self.deg_s, self.deg_l);
+        let phi = basis(
+            (s - self.s_min) / self.s_span,
+            (l - self.l_min) / self.l_span,
+            self.deg_s,
+            self.deg_l,
+        );
         phi.iter().zip(&self.coeffs).map(|(p, c)| p * c).sum()
     }
 }
@@ -95,7 +116,11 @@ impl Model {
             d -= 1;
         }
         let poly = Poly2::fit(&pts, d, d)?;
-        Some(Model { poly, log, n_fit: pts.len() })
+        Some(Model {
+            poly,
+            log,
+            n_fit: pts.len(),
+        })
     }
 
     /// Predict the value at raw `(s, l)` (exponentiates back from log space if needed).
@@ -124,9 +149,9 @@ pub struct Eval {
     pub max_abs: f64,
     pub rms: f64,
     pub mean_abs: f64,
-    pub scale: f64,        // peak |value| over the finite grid (the % denominator)
-    pub max_rel_pct: f64,  // max_abs / scale * 100  (worst error as % of peak)
-    pub rms_rel_pct: f64,  // rms / scale * 100
+    pub scale: f64,       // peak |value| over the finite grid (the % denominator)
+    pub max_rel_pct: f64, // max_abs / scale * 100  (worst error as % of peak)
+    pub rms_rel_pct: f64, // rms / scale * 100
 }
 
 /// Fit the surrogate on a checkerboard subset of a `slews x loads` grid (`(i+j)` even),
@@ -140,14 +165,25 @@ pub fn holdout_eval(slews: &[f64], loads: &[f64], values: &[Vec<f64>], deg: usiz
 /// `ln(slew), ln(load)`. NLDM grids are log-spaced and their surfaces are far closer to
 /// low-order-polynomial in log space, so this typically fits far better than linear.
 /// Falls back to a linear fit if any involved value is non-positive (log undefined).
-pub fn holdout_eval_log(slews: &[f64], loads: &[f64], values: &[Vec<f64>], deg: usize) -> Option<Eval> {
+pub fn holdout_eval_log(
+    slews: &[f64],
+    loads: &[f64],
+    values: &[Vec<f64>],
+    deg: usize,
+) -> Option<Eval> {
     holdout_impl(slews, loads, values, deg, true)
 }
 
 /// Checkerboard fit/predict. `log` selects log-log space (inputs and target). The
 /// requested degree auto-reduces (down to 1) if the training set is too small.
 /// Returns `None` if there is no held-out point or too few train points even at degree 1.
-fn holdout_impl(slews: &[f64], loads: &[f64], values: &[Vec<f64>], deg: usize, log: bool) -> Option<Eval> {
+fn holdout_impl(
+    slews: &[f64],
+    loads: &[f64],
+    values: &[Vec<f64>],
+    deg: usize,
+    log: bool,
+) -> Option<Eval> {
     let mut train: Vec<(f64, f64, f64)> = Vec::new(); // (s, l, value) in linear units
     let mut test: Vec<(f64, f64, f64)> = Vec::new();
     let mut scale = 0.0f64; // peak |value| over the finite grid (relative-error denominator)
@@ -177,7 +213,10 @@ fn holdout_impl(slews: &[f64], loads: &[f64], values: &[Vec<f64>], deg: usize, l
     // Log mode drops stray non-positive samples (a single negative-delay artifact must
     // not disable log for the whole table); falls back to linear if too few remain.
     let log_ok = log
-        && train.iter().filter(|&&(s, l, v)| s > 0.0 && l > 0.0 && v > 0.0).count()
+        && train
+            .iter()
+            .filter(|&&(s, l, v)| s > 0.0 && l > 0.0 && v > 0.0)
+            .count()
             >= Poly2::n_terms(1, 1);
     let model = Model::fit(&train, deg, log_ok)?;
 

@@ -3,8 +3,18 @@ use vyges_char::spice::{deck, parse_measures, parse_subckt_pins};
 #[test]
 fn deck_has_essentials() {
     let d = deck(
-        "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV",
-        "A", "Y", 1.8, 0.04, 0.002, false, true, None,
+        "t",
+        &["inv.spice".into()],
+        &[],
+        "X1 A Y VDD VSS INV",
+        "A",
+        "Y",
+        1.8,
+        0.04,
+        0.002,
+        false,
+        true,
+        None,
     );
     assert!(d.contains(".include \"inv.spice\""));
     assert!(!d.contains("mc_mm_switch")); // no Monte-Carlo without a seed
@@ -22,25 +32,69 @@ fn deck_has_essentials() {
 fn deck_output_edge_follows_unateness() {
     // positive-unate (buffer): a rising input drives a RISING output edge.
     let pos = deck(
-        "t", &[], &[], "X1 A X VDD VSS BUF", "A", "X", 1.8, 0.04, 0.002, true, true, None,
+        "t",
+        &[],
+        &[],
+        "X1 A X VDD VSS BUF",
+        "A",
+        "X",
+        1.8,
+        0.04,
+        0.002,
+        true,
+        true,
+        None,
     );
     let pos_slew = pos.lines().find(|l| l.contains("out_slew")).unwrap();
-    assert!(pos.contains("TARG v(X) VAL=0.9 RISE=1"), "positive-unate output rises with input");
-    assert!(pos_slew.contains("RISE=1"), "rising output slew measured on rising edges");
+    assert!(
+        pos.contains("TARG v(X) VAL=0.9 RISE=1"),
+        "positive-unate output rises with input"
+    );
+    assert!(
+        pos_slew.contains("RISE=1"),
+        "rising output slew measured on rising edges"
+    );
     // negative-unate (inverter): a rising input drives a FALLING output edge.
     let neg = deck(
-        "t", &[], &[], "X1 A Y VDD VSS INV", "A", "Y", 1.8, 0.04, 0.002, true, false, None,
+        "t",
+        &[],
+        &[],
+        "X1 A Y VDD VSS INV",
+        "A",
+        "Y",
+        1.8,
+        0.04,
+        0.002,
+        true,
+        false,
+        None,
     );
     let neg_slew = neg.lines().find(|l| l.contains("out_slew")).unwrap();
-    assert!(neg.contains("TARG v(Y) VAL=0.9 FALL=1"), "negative-unate output falls with rising input");
-    assert!(neg_slew.contains("FALL=1"), "falling output slew measured on falling edges");
+    assert!(
+        neg.contains("TARG v(Y) VAL=0.9 FALL=1"),
+        "negative-unate output falls with rising input"
+    );
+    assert!(
+        neg_slew.contains("FALL=1"),
+        "falling output slew measured on falling edges"
+    );
 }
 
 #[test]
 fn deck_emits_osdi_preload() {
     let d = deck(
-        "t", &["inv.spice".into()], &["psp103.osdi".into(), "hicum.osdi".into()],
-        "X1 A Y VDD VSS INV", "A", "Y", 1.2, 0.04, 0.002, false, true, None,
+        "t",
+        &["inv.spice".into()],
+        &["psp103.osdi".into(), "hicum.osdi".into()],
+        "X1 A Y VDD VSS INV",
+        "A",
+        "Y",
+        1.2,
+        0.04,
+        0.002,
+        false,
+        true,
+        None,
     );
     // control block with pre_osdi for each model, before the includes
     assert!(d.contains(".control\npre_osdi psp103.osdi\npre_osdi hicum.osdi\n.endc"));

@@ -6,13 +6,25 @@ use vyges_char::spice::{deck_ccs, parse_wrdata};
 #[test]
 fn deck_ccs_has_sense_source_and_wrdata() {
     let d = deck_ccs(
-        "t", &["inv.spice".into()], &[], "X1 A Y VDD VSS INV", "A", "Y", 1.8, 0.04, 0.002, false,
+        "t",
+        &["inv.spice".into()],
+        &[],
+        "X1 A Y VDD VSS INV",
+        "A",
+        "Y",
+        1.8,
+        0.04,
+        0.002,
+        false,
         "/tmp/x.dat",
     );
     assert!(d.contains("Vsns Y Y_c 0"), "0 V sense source on the output");
     assert!(d.contains("CL Y_c 0 0.002p"), "load behind the sense");
     assert!(d.contains("tran 0.5p") && d.contains("0.9n"));
-    assert!(d.contains("wrdata /tmp/x.dat i(Vsns)"), "dumps the output current");
+    assert!(
+        d.contains("wrdata /tmp/x.dat i(Vsns)"),
+        "dumps the output current"
+    );
     assert!(d.contains(".control") && d.contains(".endc"));
 }
 
@@ -60,12 +72,15 @@ fn render_emits_output_current_vectors() {
     };
     let lib = render("x", &Units::default(), &slews, &loads, &[a]);
     // the tokens vyges-sta-si's parse_ccs_set looks for
-    assert!(lib.contains("lu_table_template (ccs_tmpl)"), "ccs time template declared");
+    assert!(
+        lib.contains("lu_table_template (ccs_tmpl)"),
+        "ccs time template declared"
+    );
     assert!(lib.contains("output_current_rise () {"));
     assert!(lib.contains("output_current_fall () {"));
     assert!(lib.contains("vector (ccs_tmpl) {"));
     assert!(lib.contains("reference_time :"));
     assert!(lib.contains("index_3 (")); // the time axis
-    // two rise vectors + one fall vector
+                                        // two rise vectors + one fall vector
     assert_eq!(lib.matches("vector (ccs_tmpl)").count(), 3);
 }

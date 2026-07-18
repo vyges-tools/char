@@ -12,8 +12,8 @@ use std::process::exit;
 use vyges_char::dataset;
 use vyges_char::engine::{self, Characterized};
 use vyges_char::job::{AutoCfg, CharJob, SparseCfg};
-use vyges_char::library;
 use vyges_char::liberty::{self, Arc, Table, Units};
+use vyges_char::library;
 use vyges_char::{sparse, surrogate};
 
 const USAGE: &str = "\
@@ -75,7 +75,11 @@ fn link(label: &str, url: &str) {
     use std::io::IsTerminal;
     println!("{label}:\n  {url}");
     if std::io::stdout().is_terminal() {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         let _ = std::process::Command::new(opener).arg(url).status();
     }
 }
@@ -302,7 +306,10 @@ fn eval_result(
                     ("rise_transition", &a.rise_transition),
                     ("fall_transition", &a.fall_transition),
                 ] {
-                    eval_table(report, &a.cell, &arc, corner, metric, filter, slews, loads, &t.values, degree, log);
+                    eval_table(
+                        report, &a.cell, &arc, corner, metric, filter, slews, loads, &t.values,
+                        degree, log,
+                    );
                 }
             }
         }
@@ -314,7 +321,10 @@ fn eval_result(
                 ("ckq_rise_trans", &c.ckq_rise_trans),
                 ("ckq_fall_trans", &c.ckq_fall_trans),
             ] {
-                eval_table(report, &c.cell, &arc, corner, metric, filter, slews, loads, &t.values, degree, log);
+                eval_table(
+                    report, &c.cell, &arc, corner, metric, filter, slews, loads, &t.values, degree,
+                    log,
+                );
             }
         }
     }
@@ -353,7 +363,17 @@ fn print_surrogate(report: &[SurrRow], json: bool) {
     }
     println!(
         "{:<22} {:<10} {:<8} {:<16} {:>3} {:>6} {:>5} {:>11} {:>11} {:>8} {:>8}",
-        "cell", "arc", "corner", "metric", "deg", "train", "test", "max_abs", "rms", "max%pk", "rms%pk"
+        "cell",
+        "arc",
+        "corner",
+        "metric",
+        "deg",
+        "train",
+        "test",
+        "max_abs",
+        "rms",
+        "max%pk",
+        "rms%pk"
     );
     for r in report {
         let e = &r.eval;
@@ -402,7 +422,10 @@ fn trunc(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
-        s.chars().take(n.saturating_sub(1)).chain(std::iter::once('…')).collect()
+        s.chars()
+            .take(n.saturating_sub(1))
+            .chain(std::iter::once('…'))
+            .collect()
     }
 }
 
@@ -445,6 +468,10 @@ fn main() {
     }
   },
   "artifacts": [ { "role": "liberty", "from_arg": "out" } ],
+  "assertion": {
+    "id": "characterization",
+    "not_applicable": true
+  },
   "consumes": ["spice"]
 }
 "#;
@@ -466,7 +493,11 @@ fn main() {
         return link("Star vyges-char on GitHub ⭐", STAR_URL);
     }
     if cli.version {
-        println!("vyges-char {} ({})", vyges_char::VERSION, env!("VYGES_GIT_SHA"));
+        println!(
+            "vyges-char {} ({})",
+            vyges_char::VERSION,
+            env!("VYGES_GIT_SHA")
+        );
         println!("{}", vyges_char::COPYRIGHT);
         return;
     }
@@ -479,7 +510,16 @@ fn main() {
     match cmd.as_str() {
         "demo" => {
             let (slews, loads, arc) = demo_arc();
-            write_out(&render("vyges_char_demo", &slews, &loads, std::slice::from_ref(&arc), &cli), &cli);
+            write_out(
+                &render(
+                    "vyges_char_demo",
+                    &slews,
+                    &loads,
+                    std::slice::from_ref(&arc),
+                    &cli,
+                ),
+                &cli,
+            );
         }
         "check" => {
             let Some(path) = cli.positionals.get(1) else {
@@ -489,7 +529,12 @@ fn main() {
             match CharJob::load(path) {
                 Ok(j) => println!(
                     "OK  cell={} arc={}->{} {} slews={} loads={}",
-                    j.cell, j.in_pin, j.out_pin, j.sense, j.slews.len(), j.loads.len()
+                    j.cell,
+                    j.in_pin,
+                    j.out_pin,
+                    j.sense,
+                    j.slews.len(),
+                    j.loads.len()
                 ),
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -511,12 +556,16 @@ fn main() {
             };
             if let Some(j) = cli.jobs.as_deref() {
                 job.threads = if j.eq_ignore_ascii_case("auto") {
-                    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+                    std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(1)
                 } else {
                     match j.parse::<usize>() {
                         Ok(n) if n >= 1 => n,
                         _ => {
-                            eprintln!("error: --jobs must be a positive integer or 'auto' (got {j:?})");
+                            eprintln!(
+                                "error: --jobs must be a positive integer or 'auto' (got {j:?})"
+                            );
                             exit(2);
                         }
                     }
@@ -532,7 +581,9 @@ fn main() {
                     exit(2);
                 }
                 if job.power_char || job.ccs || job.recv || job.montecarlo > 0 {
-                    eprintln!("error: --auto is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)");
+                    eprintln!(
+                        "error: --auto is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)"
+                    );
                     exit(2);
                 }
                 let degree = parse_usize(cli.degree.as_deref(), 2, "--degree", 1);
@@ -558,7 +609,12 @@ fn main() {
                         }
                     },
                 };
-                job.auto = Some(AutoCfg { seed, degree, target_pct: target, max_points });
+                job.auto = Some(AutoCfg {
+                    seed,
+                    degree,
+                    target_pct: target,
+                    max_points,
+                });
             }
             if let Some(spec) = cli.sparse.clone() {
                 let Some((r, c)) = parse_grid(&spec) else {
@@ -593,7 +649,9 @@ fn main() {
                 let mm = |xs: &[f64]| {
                     xs.iter()
                         .cloned()
-                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)))
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| {
+                            (lo.min(x), hi.max(x))
+                        })
                 };
                 let (smin, smax) = mm(&job.slews);
                 let (lmin, lmax) = mm(&job.loads);
@@ -608,7 +666,11 @@ fn main() {
                 let n = job.corners.len().max(1);
                 eprintln!(
                     "characterizing {} ({}x{} grid, {} corner{})",
-                    job.cell, job.slews.len(), job.loads.len(), n, if n == 1 { "" } else { "s" }
+                    job.cell,
+                    job.slews.len(),
+                    job.loads.len(),
+                    n,
+                    if n == 1 { "" } else { "s" }
                 );
             }
             match engine::run_corners(&job, cli.json) {
@@ -650,7 +712,11 @@ fn main() {
                 }
             };
             if cli.verbose {
-                eprintln!("characterizing {} cell(s) on {} thread(s)", ljob.jobs.len(), ljob.threads);
+                eprintln!(
+                    "characterizing {} cell(s) on {} thread(s)",
+                    ljob.jobs.len(),
+                    ljob.threads
+                );
             }
             let t0 = std::time::Instant::now();
             match library::run_library(&ljob) {
@@ -682,7 +748,9 @@ fn main() {
                     let ok = res.cells - res.failures.len();
                     eprintln!(
                         "characterized {}/{} cell(s) in {:.1}s",
-                        ok, res.cells, t0.elapsed().as_secs_f64()
+                        ok,
+                        res.cells,
+                        t0.elapsed().as_secs_f64()
                     );
                     for (cell, err) in &res.failures {
                         eprintln!("  FAILED {cell}: {err}");
@@ -712,7 +780,13 @@ fn main() {
                 // No JOB → offline demo dataset from the built-in sample arc (no sim).
                 None => {
                     let (slews, loads, arc) = demo_arc();
-                    let ctx = dataset::Ctx { corner: "", vdd: 1.8, temp: 25.0, slews: &slews, loads: &loads };
+                    let ctx = dataset::Ctx {
+                        corner: "",
+                        vdd: 1.8,
+                        temp: 25.0,
+                        slews: &slews,
+                        loads: &loads,
+                    };
                     dataset::rows_comb(&ctx, std::slice::from_ref(&arc))
                 }
                 Some(path) => {
@@ -740,7 +814,9 @@ fn main() {
                             loads: &job.loads,
                         };
                         match &cr.result {
-                            Characterized::Comb(arcs) => rows.extend(dataset::rows_comb(&ctx, arcs)),
+                            Characterized::Comb(arcs) => {
+                                rows.extend(dataset::rows_comb(&ctx, arcs))
+                            }
                             Characterized::Seq(cell) => rows.extend(dataset::rows_seq(&ctx, cell)),
                         }
                     }
@@ -784,7 +860,19 @@ fn main() {
                 // No JOB → offline demo on a synthetic smooth grid (no sim).
                 None => {
                     let (slews, loads, vals) = demo_surrogate_grid();
-                    eval_table(&mut report, "DEMO", "A->Y", "", "cell_rise", &filter, &slews, &loads, &vals, degree, cli.log);
+                    eval_table(
+                        &mut report,
+                        "DEMO",
+                        "A->Y",
+                        "",
+                        "cell_rise",
+                        &filter,
+                        &slews,
+                        &loads,
+                        &vals,
+                        degree,
+                        cli.log,
+                    );
                 }
                 Some(path) => {
                     let job = match CharJob::load(path) {
@@ -802,7 +890,16 @@ fn main() {
                         }
                     };
                     for cr in &results {
-                        eval_result(&mut report, &cr.name, &job.slews, &job.loads, &cr.result, &filter, degree, cli.log);
+                        eval_result(
+                            &mut report,
+                            &cr.name,
+                            &job.slews,
+                            &job.loads,
+                            &cr.result,
+                            &filter,
+                            degree,
+                            cli.log,
+                        );
                     }
                 }
             }

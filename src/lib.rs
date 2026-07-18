@@ -10,15 +10,15 @@
 //! generator, and the `.measure` parser — are std-only and unit-tested offline;
 //! only the actual sim run needs the EDA environment.
 
-pub mod job;
 pub mod arcs;
-pub mod liberty;
-pub mod spice;
-pub mod engine;
-pub mod library;
 pub mod dataset;
-pub mod surrogate;
+pub mod engine;
+pub mod job;
+pub mod liberty;
+pub mod library;
 pub mod sparse;
+pub mod spice;
+pub mod surrogate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const COPYRIGHT: &str = "© 2026 Vyges. All Rights Reserved.  https://vyges.com";

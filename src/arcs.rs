@@ -195,11 +195,19 @@ pub fn derive_arcs(out_pin: &str, function: &str) -> Result<Vec<ArcSpec>, String
     let mut ins = Vec::new();
     vars(&e, &mut ins);
     if ins.len() > 16 {
-        return Err(format!("function has {} inputs (>16); refusing brute force", ins.len()));
+        return Err(format!(
+            "function has {} inputs (>16); refusing brute force",
+            ins.len()
+        ));
     }
     let mut arcs = Vec::new();
     for (xi, x) in ins.iter().enumerate() {
-        let others: Vec<&String> = ins.iter().enumerate().filter(|(k, _)| *k != xi).map(|(_, n)| n).collect();
+        let others: Vec<&String> = ins
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k != xi)
+            .map(|(_, n)| n)
+            .collect();
         let mut found: Option<(bool, Vec<(String, bool)>)> = None;
         for combo in 0..(1u32 << others.len()) {
             let mut env = std::collections::HashMap::new();
@@ -223,13 +231,20 @@ pub fn derive_arcs(out_pin: &str, function: &str) -> Result<Vec<ArcSpec>, String
             arcs.push(ArcSpec {
                 in_pin: x.clone(),
                 out_pin: out_pin.to_string(),
-                sense: if rises { "positive_unate" } else { "negative_unate" }.to_string(),
+                sense: if rises {
+                    "positive_unate"
+                } else {
+                    "negative_unate"
+                }
+                .to_string(),
                 side,
             });
         }
     }
     if arcs.is_empty() {
-        return Err(format!("function {function:?} yields no timing arcs for {out_pin}"));
+        return Err(format!(
+            "function {function:?} yields no timing arcs for {out_pin}"
+        ));
     }
     Ok(arcs)
 }
@@ -343,7 +358,9 @@ pub fn arcs_from_lib(lib_text: &str, cell: &str) -> Result<Vec<ArcSpec>, String>
         p = pe;
     }
     if arcs.is_empty() {
-        return Err(format!("no combinational output function found for {cell} in reference lib"));
+        return Err(format!(
+            "no combinational output function found for {cell} in reference lib"
+        ));
     }
     Ok(arcs)
 }

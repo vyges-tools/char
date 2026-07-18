@@ -40,13 +40,19 @@ fn corner_temp_defaults_to_top_level() {
     )
     .unwrap();
     assert_eq!(job.corners.len(), 1);
-    assert!((job.corners[0].temp - 85.0).abs() < 1e-12, "omitted corner temp inherits job temp");
+    assert!(
+        (job.corners[0].temp - 85.0).abs() < 1e-12,
+        "omitted corner temp inherits job temp"
+    );
 }
 
 #[test]
 fn bad_corner_line_rejected() {
     let bad = "cell: INV\nnetlist: i.spice\nin_pin: A\nout_pin: Y\nslews: 0.01\nloads: 0.001\ncorner: only_two | corners/tt.spice\n";
-    assert!(CharJob::parse(bad, ".").is_err(), "corner needs name|models|vdd");
+    assert!(
+        CharJob::parse(bad, ".").is_err(),
+        "corner needs name|models|vdd"
+    );
 }
 
 #[test]
@@ -68,10 +74,18 @@ fn units_carry_corner_nominal_voltage_and_temp() {
         in_pin: "A".into(),
         out_pin: "Y".into(),
         sense: "negative_unate".into(),
-        cell_rise: Table { values: vec![vec![0.1]] },
-        cell_fall: Table { values: vec![vec![0.1]] },
-        rise_transition: Table { values: vec![vec![0.05]] },
-        fall_transition: Table { values: vec![vec![0.05]] },
+        cell_rise: Table {
+            values: vec![vec![0.1]],
+        },
+        cell_fall: Table {
+            values: vec![vec![0.1]],
+        },
+        rise_transition: Table {
+            values: vec![vec![0.05]],
+        },
+        fall_transition: Table {
+            values: vec![vec![0.05]],
+        },
         sigma_rise: Table::new(1, 1),
         sigma_fall: Table::new(1, 1),
         ccs_rise: vec![],
@@ -84,9 +98,19 @@ fn units_carry_corner_nominal_voltage_and_temp() {
         int_fall: Table::new(2, 2),
         leakage: vec![],
     };
-    let units = Units { nom_voltage: 1.60, nom_temp: -40.0, ..Units::default() };
+    let units = Units {
+        nom_voltage: 1.60,
+        nom_temp: -40.0,
+        ..Units::default()
+    };
     let lib = render("INV__ss", &units, &slews, &loads, &[arc]);
-    assert!(lib.contains("nom_voltage : 1.6000"), "corner supply in header");
-    assert!(lib.contains("nom_temperature : -40.0"), "corner temp in header");
+    assert!(
+        lib.contains("nom_voltage : 1.6000"),
+        "corner supply in header"
+    );
+    assert!(
+        lib.contains("nom_temperature : -40.0"),
+        "corner temp in header"
+    );
     assert!(lib.contains("library (INV__ss)"));
 }
