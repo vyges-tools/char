@@ -17,25 +17,25 @@ use vyges_char::library;
 use vyges_char::{sparse, surrogate};
 
 const USAGE: &str = "\
-vyges-char — standard-cell timing characterization (SPICE -> Liberty)
+vyges loom char — standard-cell timing characterization (SPICE -> Liberty)
 
 usage:
-  vyges-char run     JOB      [-o OUT] [--json] [--jobs N]
-                              [--sparse RxC [--verify K]] | [--auto [--target PCT]]
-                                                  characterize one cell. --sparse: simulate a
-                                                  coarse RxC grid, surrogate-fill the rest.
-                                                  --auto: self-tuning — keep sampling the
-                                                  biggest gap until CV error <= target, fill.
-                                                  --jobs: parallelize the per-point sweep.
-  vyges-char library MANIFEST  [-o DIR]           characterize many cells (parallel) -> merged .lib
-  vyges-char dataset [JOB]    [-o OUT] [--format csv|jsonl] [--clean]
-                                                  flatten characterization to a tidy
-                                                  training table (no JOB = offline demo)
-  vyges-char surrogate [JOB]  [--degree D] [--metric M] [--log] [--json]
-                                                  fit a CPU surrogate on a grid subset,
-                                                  report held-out error (no JOB = demo)
-  vyges-char check   JOB
-  vyges-char demo    [-o OUT] [--json]
+  vyges loom char run     JOB      [-o OUT] [--json] [--jobs N]
+                                   [--sparse RxC [--verify K]] | [--auto [--target PCT]]
+                                                       characterize one cell. --sparse: simulate a
+                                                       coarse RxC grid, surrogate-fill the rest.
+                                                       --auto: self-tuning — keep sampling the
+                                                       biggest gap until CV error <= target, fill.
+                                                       --jobs: parallelize the per-point sweep.
+  vyges loom char library MANIFEST  [-o DIR]           characterize many cells (parallel) -> merged .lib
+  vyges loom char dataset [JOB]    [-o OUT] [--format csv|jsonl] [--clean]
+                                                       flatten characterization to a tidy
+                                                       training table (no JOB = offline demo)
+  vyges loom char surrogate [JOB]  [--degree D] [--metric M] [--log] [--json]
+                                                       fit a CPU surrogate on a grid subset,
+                                                       report held-out error (no JOB = demo)
+  vyges loom char check   JOB
+  vyges loom char demo    [-o OUT] [--json]
 
 flags:
   -o FILE          write output to FILE (default: stdout)
