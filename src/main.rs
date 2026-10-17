@@ -48,8 +48,8 @@ flags:
   --log            surrogate: fit in log-log space (NLDM grids are log-spaced)
   --sparse RxC     run: simulate only a coarse RxC grid, surrogate-fill the dense .lib
   --verify K       run --sparse: re-simulate K un-fitted points, report the real error
-  --threads N      worker threads: run = grid points of one cell, library = cells (each cell's
-                   points then run serially). --jobs N is the same option.
+  --threads N      simulator processes at once: run = one cell's grid points, library = every
+                   cell's points from one shared pool. --jobs N is the same option.
   --auto           run: self-tuning active sampling to a target accuracy, then surrogate-fill
   --target PCT     run --auto: stop when LOO-CV error <= PCT% of peak (default 2.0)
   --max-points N   run --auto: cap simulated points (default: the full grid)

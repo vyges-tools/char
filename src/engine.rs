@@ -11,6 +11,46 @@ use crate::job::{AutoCfg, CharJob, SparseCfg};
 
 /// Per-process counter for unique temp deck filenames.
 static DECK_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+/// How many simulator processes may run at once across the whole process; 0 = no limit.
+/// A library run sets it to its thread count and lets every cell spread its points over the
+/// same count: the slots, not the threads, are the budget, so when the short cells finish the
+/// long ones take the free slots instead of leaving cores idle. Each point is still its own
+/// process with its own deck, so the results do not depend on the limit.
+static SIM_LIMIT: AtomicUsize = AtomicUsize::new(0);
+static SIM_BUSY: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static SIM_FREED: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Cap concurrent simulator processes at `n` (0 lifts the cap).
+pub fn limit_simulators(n: usize) {
+    SIM_LIMIT.store(n, Ordering::SeqCst);
+    SIM_FREED.notify_all();
+}
+
+/// Run one simulator process inside the cap. A slot is held only while the process runs and
+/// nothing else is waited on while holding it, so callers cannot deadlock on slots.
+fn sim_output(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    struct Slot;
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            *SIM_BUSY.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+            SIM_FREED.notify_one();
+        }
+    }
+    let _slot = {
+        let mut busy = SIM_BUSY.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let limit = SIM_LIMIT.load(Ordering::SeqCst);
+            if limit == 0 || *busy < limit {
+                break;
+            }
+            busy = SIM_FREED.wait(busy).unwrap_or_else(|e| e.into_inner());
+        }
+        *busy += 1;
+        Slot
+    };
+    cmd.output()
+}
 use crate::liberty::{self, Arc, Table, Units, Waveform};
 use crate::sparse::{ArcModels, ArcPoint};
 use crate::spice;
@@ -130,13 +170,13 @@ fn run_point(
     let deck_path =
         std::env::temp_dir().join(format!("vyges_char_{}_{}.sp", std::process::id(), n));
     std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
-    let out = Command::new("ngspice")
+    let out = sim_output(Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
         .arg("--no-spiceinit")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .output()
+        )
         .map_err(|e| CharError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&deck_path);
     let text = format!(
@@ -875,11 +915,11 @@ fn run_ccs_point(
         dat.to_string_lossy().as_ref(),
     );
     std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
-    let out = Command::new("ngspice")
+    let out = sim_output(Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
         .arg("--no-spiceinit")
-        .output()
+        )
         .map_err(|e| CharError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&deck_path);
     let text = std::fs::read_to_string(&dat).map_err(|e| {
@@ -940,11 +980,11 @@ fn run_recv_point(
         dat.to_string_lossy().as_ref(),
     );
     std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
-    let out = Command::new("ngspice")
+    let out = sim_output(Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
         .arg("--no-spiceinit")
-        .output()
+        )
         .map_err(|e| CharError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&deck_path);
     let text = std::fs::read_to_string(&dat).map_err(|e| {
@@ -1116,11 +1156,11 @@ fn run_seq(
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
     let deck_path = std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
     std::fs::write(&deck_path, d.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
-    let out = Command::new("ngspice")
+    let out = sim_output(Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
         .arg("--no-spiceinit")
-        .output()
+        )
         .map_err(|e| CharError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&deck_path);
     let text = format!(
@@ -1787,11 +1827,11 @@ fn run_deck(deck: &str, key: &str) -> Result<(Option<f64>, Option<f64>), CharErr
     let n = DECK_SEQ.fetch_add(1, Ordering::Relaxed);
     let deck_path = std::env::temp_dir().join(format!("vyges_seq_{}_{}.sp", std::process::id(), n));
     std::fs::write(&deck_path, deck.as_bytes()).map_err(|e| CharError::Io(e.to_string()))?;
-    let out = Command::new("ngspice")
+    let out = sim_output(Command::new("ngspice")
         .arg("-b")
         .arg(&deck_path)
         .arg("--no-spiceinit")
-        .output()
+        )
         .map_err(|e| CharError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&deck_path);
     let text = format!(
@@ -1914,4 +1954,32 @@ pub fn run_corners(job: &CharJob, json: bool) -> Result<Vec<(String, String)>, C
         ));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The slot cap bounds how many processes run at once: six 0.3 s processes under a cap of
+    /// two take three rounds; with the cap lifted they overlap. (A stand-in process, not the
+    /// simulator, so this runs anywhere with `sleep`.)
+    #[cfg(unix)]
+    #[test]
+    fn the_slot_cap_bounds_concurrent_processes() {
+        let run = |cap: usize| {
+            limit_simulators(cap);
+            let t0 = std::time::Instant::now();
+            std::thread::scope(|s| {
+                for _ in 0..6 {
+                    s.spawn(|| sim_output(Command::new("sleep").arg("0.3")).expect("sleep runs"));
+                }
+            });
+            t0.elapsed().as_secs_f64()
+        };
+        let capped = run(2);
+        let free = run(0);
+        assert!(capped >= 0.85, "cap 2: six 0.3 s processes need three rounds, took {capped:.2} s");
+        assert!(free < 0.75, "no cap: they overlap, took {free:.2} s");
+        assert_eq!(*SIM_BUSY.lock().unwrap(), 0, "every slot is given back");
+    }
 }

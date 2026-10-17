@@ -124,9 +124,11 @@ jobs_dir: cells                   # every *.char in a dir (or `jobs: a.char, b.c
 ### Threads
 
 Every run picks its worker-thread count from the machine: its physical cores (within the
-process's CPU affinity), one fewer when there are more than four, at most 16. `run` spreads a
-cell's grid points across them; `library` spreads cells (each cell's points then run one at a
-time, so the machine is not oversubscribed). The run prints what it chose. The output is the
+process's CPU affinity), one fewer when there are more than four, at most 16. That is the number
+of simulator processes running at once. `run` spreads one cell's grid points across them;
+`library` draws every cell's points from the same pool, so a library of a few large cells keeps
+the machine as busy as one of many small ones, and never runs more than that many. The run
+prints what it chose. The output is the
 same at any count — every point is an independent simulator process and results are placed in
 grid / manifest order.
 

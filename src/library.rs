@@ -151,6 +151,14 @@ pub fn run_library(ljob: &LibraryJob) -> Result<LibraryResult, CharError> {
         n => n,
     };
     let nthreads = threads.clamp(1, jobs.len().max(1));
+    // `threads` is the budget of simulator processes, shared: every cell may spread its points
+    // over all of it, and the slot cap keeps the total at `threads`. With fewer cells than
+    // threads this is what keeps the machine busy — a 1-thread-per-cell split left most of it
+    // idle while one large cell ran its grid serially.
+    for j in &mut jobs {
+        j.threads = threads;
+    }
+    crate::engine::limit_simulators(threads);
 
     std::thread::scope(|scope| {
         for _ in 0..nthreads {
@@ -165,6 +173,8 @@ pub fn run_library(ljob: &LibraryJob) -> Result<LibraryResult, CharError> {
             });
         }
     });
+
+    crate::engine::limit_simulators(0);
 
     // regroup by corner, in cell (input) order, recording failures.
     let res = results.into_inner().unwrap();
