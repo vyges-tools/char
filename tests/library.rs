@@ -15,10 +15,11 @@ fn manifest_parses_jobs_and_threads() {
 }
 
 #[test]
-fn manifest_defaults_threads_to_parallelism() {
+fn manifest_leaves_threads_unset_for_the_default() {
+    // 0 = not set: the run takes the shared balanced default (the CLI's --threads wins over both).
     let m = "library: x\njobs: a.char\n";
     let j = LibraryJob::parse(m, ".").unwrap();
-    assert!(j.threads >= 1, "threads default to available parallelism");
+    assert_eq!(j.threads, 0);
 }
 
 #[test]

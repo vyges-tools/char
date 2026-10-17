@@ -20,14 +20,15 @@ const USAGE: &str = "\
 vyges loom char — standard-cell timing characterization (SPICE -> Liberty)
 
 usage:
-  vyges loom char run     JOB      [-o OUT] [--json] [--jobs N]
+  vyges loom char run     JOB      [-o OUT] [--json] [--threads N]
                                    [--sparse RxC [--verify K]] | [--auto [--target PCT]]
                                                        characterize one cell. --sparse: simulate a
                                                        coarse RxC grid, surrogate-fill the rest.
                                                        --auto: self-tuning — keep sampling the
                                                        biggest gap until CV error <= target, fill.
-                                                       --jobs: parallelize the per-point sweep.
-  vyges loom char library MANIFEST  [-o DIR]           characterize many cells (parallel) -> merged .lib
+                                                       Grid points run in parallel.
+  vyges loom char library MANIFEST  [-o DIR] [--threads N]
+                                                       characterize many cells (parallel) -> merged .lib
   vyges loom char dataset [JOB]    [-o OUT] [--format csv|jsonl] [--clean]
                                                        flatten characterization to a tidy
                                                        training table (no JOB = offline demo)
@@ -47,7 +48,8 @@ flags:
   --log            surrogate: fit in log-log space (NLDM grids are log-spaced)
   --sparse RxC     run: simulate only a coarse RxC grid, surrogate-fill the dense .lib
   --verify K       run --sparse: re-simulate K un-fitted points, report the real error
-  --jobs N         run: parallelize the per-point ngspice sweep across N threads (N=auto: all cores)
+  --threads N      worker threads: run = grid points of one cell, library = cells (each cell's
+                   points then run serially). --jobs N is the same option.
   --auto           run: self-tuning active sampling to a target accuracy, then surrogate-fill
   --target PCT     run --auto: stop when LOO-CV error <= PCT% of peak (default 2.0)
   --max-points N   run --auto: cap simulated points (default: the full grid)
@@ -61,6 +63,8 @@ flags:
   --feature-request request a feature (central)
   --sponsor        sponsor Vyges (github.com/sponsors/vyges-ip)
   --star           star this tool on GitHub ⭐
+
+{THREADS}
 ";
 
 const BUG_URL: &str =
@@ -140,7 +144,7 @@ fn parse_cli(args: &[String]) -> Cli {
                 c.verify = args.get(i + 1).cloned();
                 i += 1;
             }
-            "--jobs" => {
+            "--jobs" | "--threads" => {
                 c.jobs = args.get(i + 1).cloned();
                 i += 1;
             }
@@ -173,6 +177,22 @@ fn parse_cli(args: &[String]) -> Cli {
         i += 1;
     }
     c
+}
+
+/// `--threads N` / `--jobs N` as the shared thread rule reads it: absent, `0` or `auto` leave
+/// the choice to the default (an explicit `auto` was the old spelling of "use the machine").
+fn thread_flag(cli: &Cli) -> Option<usize> {
+    let j = cli.jobs.as_deref()?;
+    if j.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    match j.parse::<usize>() {
+        Ok(n) => Some(n),
+        Err(_) => {
+            eprintln!("error: --threads must be a whole number, 0 for the default (got {j:?})");
+            exit(2);
+        }
+    }
 }
 
 fn write_out(text: &str, cli: &Cli) {
@@ -445,7 +465,7 @@ fn main() {
     "args_template": ["run", "{job}"],
     "optional": [
       { "arg": "out", "flag": "-o" },
-      { "arg": "jobs", "flag": "--jobs" },
+      { "arg": "threads", "flag": "--threads" },
       { "arg": "sparse", "flag": "--sparse" },
       { "arg": "verify", "flag": "--verify" },
       { "arg": "auto", "flag": "--auto" },
@@ -462,7 +482,7 @@ fn main() {
     "properties": {
       "job": { "type": "string", "description": "path to the characterization job file (JOB)" },
       "out": { "type": "string", "description": "write output to FILE instead of stdout" },
-      "jobs": { "type": "string", "description": "parallelize the per-point ngspice sweep across N threads (N or 'auto')" },
+      "threads": { "type": "integer", "description": "worker threads for the per-point simulator sweep; omit for the balanced default (see the top-level threads block)" },
       "sparse": { "type": "string", "description": "simulate only a coarse RxC grid, surrogate-fill the dense .lib" },
       "verify": { "type": "string", "description": "with --sparse: re-simulate K un-fitted points, report the real error" },
       "auto": { "type": "boolean", "description": "self-tuning active sampling to a target accuracy, then surrogate-fill" },
@@ -477,10 +497,11 @@ fn main() {
     "id": "characterization",
     "not_applicable": true
   },
-  "consumes": ["spice"]
+  "consumes": ["spice"],
+  "threads": @THREADS@
 }
 "#;
-        print!("{DESCRIBE}");
+        print!("{}", DESCRIBE.replace("@THREADS@", vyges_loom::threads::DESCRIBE_THREADS));
         return;
     }
     let cli = parse_cli(&args);
@@ -508,7 +529,7 @@ fn main() {
     }
     let cmd = cli.positionals.first().cloned().unwrap_or_default();
     if cli.help || cmd.is_empty() {
-        print!("{USAGE}");
+        print!("{}", USAGE.replace("{THREADS}", vyges_loom::threads::HELP));
         exit(if cmd.is_empty() && !cli.help { 2 } else { 0 });
     }
 
@@ -559,23 +580,11 @@ fn main() {
                     exit(2);
                 }
             };
-            if let Some(j) = cli.jobs.as_deref() {
-                job.threads = if j.eq_ignore_ascii_case("auto") {
-                    std::thread::available_parallelism()
-                        .map(|n| n.get())
-                        .unwrap_or(1)
-                } else {
-                    match j.parse::<usize>() {
-                        Ok(n) if n >= 1 => n,
-                        _ => {
-                            eprintln!(
-                                "error: --jobs must be a positive integer or 'auto' (got {j:?})"
-                            );
-                            exit(2);
-                        }
-                    }
-                };
+            let choice = vyges_loom::threads::pick(thread_flag(&cli), &[]);
+            if !cli.quiet {
+                eprintln!("{}", choice.line());
             }
+            job.threads = choice.threads;
             if cli.auto {
                 if cli.sparse.is_some() {
                     eprintln!("error: use --auto OR --sparse, not both");
@@ -709,19 +718,19 @@ fn main() {
                 eprintln!("usage: vyges-char library MANIFEST [-o OUTDIR]");
                 exit(2);
             };
-            let ljob = match library::LibraryJob::load(path) {
+            let mut ljob = match library::LibraryJob::load(path) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("error: {e}");
                     exit(2);
                 }
             };
-            if cli.verbose {
-                eprintln!(
-                    "characterizing {} cell(s) on {} thread(s)",
-                    ljob.jobs.len(),
-                    ljob.threads
-                );
+            // --threads beats the manifest's `threads:`, which beats the default.
+            let manifest = (ljob.threads > 0).then_some(ljob.threads);
+            let choice = vyges_loom::threads::pick(thread_flag(&cli).filter(|&n| n > 0).or(manifest), &[]);
+            ljob.threads = choice.threads;
+            if !cli.quiet {
+                eprintln!("characterizing {} cell(s): {}", ljob.jobs.len(), choice.line());
             }
             let t0 = std::time::Instant::now();
             match library::run_library(&ljob) {
@@ -918,7 +927,7 @@ fn main() {
         }
         other => {
             eprintln!("vyges-char: unknown command {other:?}\n");
-            print!("{USAGE}");
+            print!("{}", USAGE.replace("{THREADS}", vyges_loom::threads::HELP));
             exit(2);
         }
     }

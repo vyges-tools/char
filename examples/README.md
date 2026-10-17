@@ -80,21 +80,22 @@ measure it on **your** cells, PDK, and grid.
 These are built in — set the knobs, run experiments:
 
 ```sh
-# parallelize the per-point ngspice sweep (independent points, identical output):
-vyges-char run inv_sweep.char --jobs auto            # auto = all cores
+# the per-point ngspice sweep runs in parallel by default (independent points, identical
+# output at any count); the run prints the thread count it chose. --threads 1 = serial:
+vyges-char run inv_sweep.char
 
 # sparse: simulate a coarse 4x4, surrogate-fill the dense .lib; verify on 8 held-out points:
 vyges-char run inv_sweep.char --sparse 4x4 --verify 8
 
 # self-tuning: keep sampling the biggest gap until cross-validated error <= 6% of peak:
-vyges-char run inv_sweep.char --auto --target 6 --jobs auto
+vyges-char run inv_sweep.char --auto --target 6
 #   -> prints how many points it simulated of the full grid; looser target = fewer sims
 ```
 
 `--auto` is the "set the accuracy bar, let the tool choose the sampling" mode — the
-sample-efficiency experiment with no scripting. Pair any of them with `--jobs` for speed.
+sample-efficiency experiment with no scripting.
 
-`--jobs` works on **every** run (combinational and sequential). `--sparse` also works on
+Parallel points work on **every** run (combinational and sequential). `--sparse` also works on
 **plain D-flops** — it surrogate-fills the CK→Q arc and the setup/hold tables from a coarse
 grid (`--auto` and async set/reset flops are combinational / dense-only for now).
 

@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! library:  sky130_fd_sc_hd_subset
-//! threads:  8                       # default: available parallelism
+//! threads:  8                       # default: the balanced default (see `run_library`)
 //! jobs:     cells/inv_1.char, cells/nand2_1.char, cells/dfxtp_1.char
 //! #jobs_dir: cells                  # alternative: every *.char in a directory
 //! ```
@@ -95,11 +95,6 @@ impl LibraryJob {
         if jobs.is_empty() {
             return Err(LibraryError("no jobs (set `jobs:` or `jobs_dir:`)".into()));
         }
-        if threads == 0 {
-            threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4);
-        }
         Ok(LibraryJob {
             library,
             jobs,
@@ -150,7 +145,12 @@ pub fn run_library(ljob: &LibraryJob) -> Result<LibraryResult, CharError> {
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<CellOutcome>>> =
         Mutex::new((0..jobs.len()).map(|_| None).collect());
-    let nthreads = ljob.threads.clamp(1, jobs.len().max(1));
+    // 0 = unset: the shared balanced default. Results land in manifest order at any count.
+    let threads = match ljob.threads {
+        0 => vyges_loom::threads::pick(None, &[]).threads,
+        n => n,
+    };
+    let nthreads = threads.clamp(1, jobs.len().max(1));
 
     std::thread::scope(|scope| {
         for _ in 0..nthreads {

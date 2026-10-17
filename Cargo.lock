@@ -5,3 +5,11 @@ version = 4
 [[package]]
 name = "vyges-char"
 version = "0.1.41"
+dependencies = [
+ "vyges-loom",
+]
+
+[[package]]
+name = "vyges-loom"
+version = "0.1.41"
+source = "git+https://github.com/vyges-tools/loom?branch=main#506c687d2159132645814623dd9f0344939cce66"
