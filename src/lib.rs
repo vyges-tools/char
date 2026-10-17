@@ -12,6 +12,7 @@
 
 pub mod arcs;
 pub mod dataset;
+pub mod diag;
 pub mod engine;
 pub mod job;
 pub mod liberty;

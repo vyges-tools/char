@@ -189,7 +189,7 @@ fn thread_flag(cli: &Cli) -> Option<usize> {
     match j.parse::<usize>() {
         Ok(n) => Some(n),
         Err(_) => {
-            eprintln!("error: --threads must be a whole number, 0 for the default (got {j:?})");
+            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--threads must be a whole number, 0 for the default (got {j:?})"));
             exit(2);
         }
     }
@@ -204,7 +204,7 @@ fn write_out(text: &str, cli: &Cli) {
                 }
             }
             Err(e) => {
-                eprintln!("error: {path}: {e}");
+                vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{path}: {e}"));
                 exit(1);
             }
         },
@@ -430,7 +430,7 @@ fn parse_usize(opt: Option<&str>, default: usize, name: &str, min: usize) -> usi
         Some(s) => match s.parse::<usize>() {
             Ok(n) if n >= min => n,
             _ => {
-                eprintln!("error: {name} must be an integer >= {min} (got {s:?})");
+                vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{name} must be an integer >= {min} (got {s:?})"));
                 exit(2);
             }
         },
@@ -563,7 +563,7 @@ fn main() {
                     j.loads.len()
                 ),
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                     exit(2);
                 }
             }
@@ -576,28 +576,26 @@ fn main() {
             let mut job = match CharJob::load(path) {
                 Ok(j) => j,
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                     exit(2);
                 }
             };
             let choice = vyges_loom::threads::pick(thread_flag(&cli), &[]);
             if !cli.quiet {
-                eprintln!("{}", choice.line());
+                vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-THREADS", choice.line());
             }
             job.threads = choice.threads;
             if cli.auto {
                 if cli.sparse.is_some() {
-                    eprintln!("error: use --auto OR --sparse, not both");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", "use --auto OR --sparse, not both");
                     exit(2);
                 }
                 if job.seq {
-                    eprintln!("error: --auto does not support sequential cells (v1)");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", "--auto does not support sequential cells (v1)");
                     exit(2);
                 }
                 if job.power_char || job.ccs || job.recv || job.montecarlo > 0 {
-                    eprintln!(
-                        "error: --auto is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)"
-                    );
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", "--auto is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)");
                     exit(2);
                 }
                 let degree = parse_usize(cli.degree.as_deref(), 2, "--degree", 1);
@@ -606,7 +604,7 @@ fn main() {
                     Some(t) => match t.parse::<f64>() {
                         Ok(v) if v > 0.0 => v,
                         _ => {
-                            eprintln!("error: --target must be a positive number (got {t:?})");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--target must be a positive number (got {t:?})"));
                             exit(2);
                         }
                     },
@@ -618,7 +616,7 @@ fn main() {
                     Some(s) => match parse_grid(s) {
                         Some(g) => g,
                         None => {
-                            eprintln!("error: --seed expects RxC (e.g. 3x3) or N (got {s:?})");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--seed expects RxC (e.g. 3x3) or N (got {s:?})"));
                             exit(2);
                         }
                     },
@@ -632,12 +630,12 @@ fn main() {
             }
             if let Some(spec) = cli.sparse.clone() {
                 let Some((r, c)) = parse_grid(&spec) else {
-                    eprintln!("error: --sparse expects RxC (e.g. 4x4) or N (got {spec:?})");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--sparse expects RxC (e.g. 4x4) or N (got {spec:?})"));
                     exit(2);
                 };
                 // Sequential D-flops are supported (engine rejects async + --auto for seq).
                 if !job.seq && (job.power_char || job.ccs || job.recv || job.montecarlo > 0) {
-                    eprintln!("error: --sparse is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", "--sparse is NLDM-only in v1 (remove power_char/ccs/recv/montecarlo)");
                     exit(2);
                 }
                 let degree = match cli.degree.as_deref() {
@@ -645,7 +643,7 @@ fn main() {
                     Some(d) => match d.parse::<usize>() {
                         Ok(n) if n >= 1 => n,
                         _ => {
-                            eprintln!("error: --degree must be a positive integer (got {d:?})");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--degree must be a positive integer (got {d:?})"));
                             exit(2);
                         }
                     },
@@ -655,7 +653,7 @@ fn main() {
                     Some(v) => match v.parse::<usize>() {
                         Ok(n) => n,
                         _ => {
-                            eprintln!("error: --verify must be a non-negative integer (got {v:?})");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--verify must be a non-negative integer (got {v:?})"));
                             exit(2);
                         }
                     },
@@ -678,14 +676,14 @@ fn main() {
             }
             if cli.verbose {
                 let n = job.corners.len().max(1);
-                eprintln!(
+                vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-RUN", format!(
                     "characterizing {} ({}x{} grid, {} corner{})",
                     job.cell,
                     job.slews.len(),
                     job.loads.len(),
                     n,
                     if n == 1 { "" } else { "s" }
-                );
+                ));
             }
             match engine::run_corners(&job, cli.json) {
                 Ok(libs) => {
@@ -700,15 +698,15 @@ fn main() {
                         for (name, text) in &libs {
                             let path = format!("{dir}/{}__{name}.{ext}", job.cell);
                             if let Err(e) = std::fs::write(&path, text) {
-                                eprintln!("error: writing {path}: {e}");
+                                vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("writing {path}: {e}"));
                                 exit(1);
                             }
-                            eprintln!("wrote {path}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-WROTE", format!("wrote {path}"));
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                     exit(1);
                 }
             }
@@ -721,7 +719,7 @@ fn main() {
             let mut ljob = match library::LibraryJob::load(path) {
                 Ok(j) => j,
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                     exit(2);
                 }
             };
@@ -730,7 +728,7 @@ fn main() {
             let choice = vyges_loom::threads::pick(thread_flag(&cli).filter(|&n| n > 0).or(manifest), &[]);
             ljob.threads = choice.threads;
             if !cli.quiet {
-                eprintln!("characterizing {} cell(s): {}", ljob.jobs.len(), choice.line());
+                vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-THREADS", format!("characterizing {} cell(s): {}", ljob.jobs.len(), choice.line()));
             }
             let t0 = std::time::Instant::now();
             match library::run_library(&ljob) {
@@ -738,7 +736,7 @@ fn main() {
                     let dir = cli.out.as_deref();
                     if let Some(d) = dir {
                         if let Err(e) = std::fs::create_dir_all(d) {
-                            eprintln!("error: creating {d}: {e}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("creating {d}: {e}"));
                             exit(1);
                         }
                     }
@@ -751,30 +749,30 @@ fn main() {
                                     format!("{d}/{}__{corner}.lib", ljob.library)
                                 };
                                 if let Err(e) = std::fs::write(&name, text) {
-                                    eprintln!("error: writing {name}: {e}");
+                                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("writing {name}: {e}"));
                                     exit(1);
                                 }
-                                eprintln!("wrote {name}");
+                                vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-WROTE", format!("wrote {name}"));
                             }
                             None => print!("{text}"),
                         }
                     }
                     let ok = res.cells - res.failures.len();
-                    eprintln!(
+                    vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-DONE", format!(
                         "characterized {}/{} cell(s) in {:.1}s",
                         ok,
                         res.cells,
                         t0.elapsed().as_secs_f64()
-                    );
+                    ));
                     for (cell, err) in &res.failures {
-                        eprintln!("  FAILED {cell}: {err}");
+                        vyges_char::diag::emit(vyges_char::diag::Level::Warn, "CHAR-CELL-FAILED", format!("FAILED {cell}: {err}"));
                     }
                     if !res.failures.is_empty() {
                         exit(1);
                     }
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                     exit(1);
                 }
             }
@@ -785,7 +783,7 @@ fn main() {
                 Some(s) => match dataset::Format::parse(s) {
                     Some(f) => f,
                     None => {
-                        eprintln!("error: --format must be csv or jsonl (got {s:?})");
+                        vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--format must be csv or jsonl (got {s:?})"));
                         exit(2);
                     }
                 },
@@ -807,14 +805,14 @@ fn main() {
                     let job = match CharJob::load(path) {
                         Ok(j) => j,
                         Err(e) => {
-                            eprintln!("error: {e}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                             exit(2);
                         }
                     };
                     let results = match engine::characterize_corners(&job) {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("error: {e}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                             exit(1);
                         }
                     };
@@ -841,7 +839,7 @@ fn main() {
             let rows = if cli.clean {
                 let (kept, dropped) = dataset::without_flagged(rows);
                 if !cli.quiet {
-                    eprintln!("dataset: dropped {dropped} flagged (non-physical) row(s)");
+                    vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-DATASET", format!("dataset: dropped {dropped} flagged (non-physical) row(s)"));
                 }
                 kept
             } else {
@@ -854,7 +852,7 @@ fn main() {
                 } else {
                     String::new()
                 };
-                eprintln!("dataset: {} rows{note}", rows.len());
+                vyges_char::diag::emit(vyges_char::diag::Level::Info, "CHAR-DATASET", format!("dataset: {} rows{note}", rows.len()));
             }
         }
         "surrogate" => {
@@ -863,7 +861,7 @@ fn main() {
                 Some(s) => match s.parse::<usize>() {
                     Ok(d) if d >= 1 => d,
                     _ => {
-                        eprintln!("error: --degree must be a positive integer (got {s:?})");
+                        vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("--degree must be a positive integer (got {s:?})"));
                         exit(2);
                     }
                 },
@@ -892,14 +890,14 @@ fn main() {
                     let job = match CharJob::load(path) {
                         Ok(j) => j,
                         Err(e) => {
-                            eprintln!("error: {e}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                             exit(2);
                         }
                     };
                     let results = match engine::characterize_corners(&job) {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("error: {e}");
+                            vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", format!("{e}"));
                             exit(1);
                         }
                     };
@@ -918,9 +916,7 @@ fn main() {
                 }
             }
             if report.is_empty() {
-                eprintln!(
-                    "surrogate: nothing to evaluate (grid too small to hold out, or --metric matched nothing)"
-                );
+                vyges_char::diag::emit(vyges_char::diag::Level::Error, "CHAR-ERROR", "surrogate: nothing to evaluate (grid too small to hold out, or --metric matched nothing)");
                 exit(1);
             }
             print_surrogate(&report, cli.json);

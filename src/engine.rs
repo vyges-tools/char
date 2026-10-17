@@ -699,14 +699,14 @@ fn characterize_arc_sparse(
         int_fall: Table::new(ns, nl),
         leakage: Vec::new(),
     };
-    eprintln!(
+    crate::diag::emit(crate::diag::Level::Info, "CHAR-SPARSE", format!(
         "sparse {}->{}: simulated {} point(s), predicted {} (of {} dense)",
         spec.in_pin,
         spec.out_pin,
         sim_pts.len(),
         ns * nl - sim_pts.len().min(ns * nl),
         ns * nl
-    );
+    ));
     if cfg.verify > 0 {
         verify_sparse(job, spec, cfg, &models)?;
     }
@@ -768,14 +768,14 @@ fn verify_sparse(
         }
         let n = measured.len().max(1) as f64;
         let den = if scale > 1e-12 { scale } else { 1.0 };
-        eprintln!(
+        crate::diag::emit(crate::diag::Level::Info, "CHAR-VERIFY", format!(
             "verify {}->{} {name}: {} pts, max {:.2}% / rms {:.2}% of peak",
             spec.in_pin,
             spec.out_pin,
             measured.len(),
             max_abs / den * 100.0,
             (sumsq / n).sqrt() / den * 100.0
-        );
+        ));
     }
     Ok(())
 }
@@ -849,7 +849,7 @@ fn characterize_arc_auto(
         fall_transition.values[i][j] = p.fall_transition;
     }
     let final_cv = crate::sparse::loo_cv_rms_pct(&measured, cfg.degree);
-    eprintln!(
+    crate::diag::emit(crate::diag::Level::Info, "CHAR-AUTO", format!(
         "auto {}->{}: simulated {} of {} dense point(s), CV ~{:.2}% of peak (target {:.2}%)",
         spec.in_pin,
         spec.out_pin,
@@ -857,7 +857,7 @@ fn characterize_arc_auto(
         ns * nl,
         final_cv,
         cfg.target_pct
-    );
+    ));
     Ok(Arc {
         cell: job.cell.clone(),
         in_pin: spec.in_pin.clone(),
@@ -1715,14 +1715,14 @@ fn characterize_seq_sparse(job: &CharJob, cfg: &SparseCfg) -> Result<liberty::Se
         crate::sparse::fill_one(&sh_col(|p| p.5), &job.slews, &job.slews, cfg.degree, false)
             .ok_or_else(seq_fit_err)?;
 
-    eprintln!(
+    crate::diag::emit(crate::diag::Level::Info, "CHAR-SPARSE", format!(
         "sparse seq {}: CK->Q {} of {} pts, setup/hold {} of {} pts",
         job.cell,
         ckq_pts.len(),
         ns * nl,
         sh_pts.len(),
         ns * ns
-    );
+    ));
 
     Ok(liberty::SeqCell {
         cell: job.cell.clone(),

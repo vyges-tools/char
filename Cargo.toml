@@ -9,9 +9,15 @@ homepage = "https://vyges.com"
 repository = "https://github.com/vyges-tools/char"
 
 # std-only (no external crates) so the core builds/tests offline; loom is std-only too and
-# supplies the shared thread rule.
+# supplies the shared thread rule. The structured-events path (`vyges-events`) is the default
+# feature; `--no-default-features` keeps the core std-only and prints the same lines plainly.
 [dependencies]
 vyges-loom = { git = "https://github.com/vyges-tools/loom", branch = "main" }
+vyges-events = { git = "https://github.com/vyges-tools/events.git", branch = "main", default-features = false, optional = true }
+
+[features]
+default = ["events"]
+events = ["dep:vyges-events"]
 
 [[bin]]
 name = "vyges-char"
