@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Every message this tool prints about a run, through one path: a `vyges-events/1.0` event with
-//! its code (text on a terminal, JSONL when piped) — or, built without the `events` feature, the
-//! same line on stderr.
+//! its code (text on a terminal, JSONL when piped) with the opt-in `events` feature — else (the
+//! default, std-only build) the same line on stderr.
 
 /// How much a message matters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
