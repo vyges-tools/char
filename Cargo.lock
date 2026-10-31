@@ -94,7 +94,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "vyges-char"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = [
  "vyges-events",
  "vyges-loom",
@@ -102,8 +102,8 @@ dependencies = [
 
 [[package]]
 name = "vyges-events"
-version = "0.1.50"
-source = "git+https://github.com/vyges-tools/events.git?branch=main#908b5fedc43ecbb1f727e6c491bb4edea03d0c95"
+version = "0.1.51"
+source = "git+https://github.com/vyges-tools/events.git?branch=main#b461f04285bcbb6f4fcaf6c025ff414151f92196"
 dependencies = [
  "serde",
  "serde_json",
@@ -111,8 +111,8 @@ dependencies = [
 
 [[package]]
 name = "vyges-loom"
-version = "0.1.51"
-source = "git+https://github.com/vyges-tools/loom?branch=main#747aca85b0fb82bcdfa3b60ccaa246235d59bf8f"
+version = "0.1.52"
+source = "git+https://github.com/vyges-tools/loom?branch=main#9fb98ca2ecf2b40508074ef13dbab01f539436b6"
 
 [[package]]
 name = "zmij"
