@@ -21,6 +21,7 @@ pub mod engine;
 pub mod job;
 pub mod liberty;
 pub mod library;
+pub mod macro_cell;
 pub mod sparse;
 pub mod spice;
 pub mod surrogate;

@@ -1,0 +1,350 @@
+/* test */
+library (t_sram__tt) {
+  technology (cmos);
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  capacitive_load_unit (1, pf);
+  input_threshold_pct_rise : 50;
+  input_threshold_pct_fall : 50;
+  output_threshold_pct_rise : 50;
+  output_threshold_pct_fall : 50;
+  slew_lower_threshold_pct_rise : 10;
+  slew_upper_threshold_pct_rise : 90;
+  slew_lower_threshold_pct_fall : 10;
+  slew_upper_threshold_pct_fall : 90;
+  slew_derate_from_library : 1;
+  nom_process : 1;
+  nom_voltage : 1.8;
+  nom_temperature : 25;
+  voltage_map (VPWR, 1.8);
+  voltage_map (VGND, 0);
+  lu_table_template (vyges_macro_constraint) {
+    variable_1 : related_pin_transition;
+    variable_2 : constrained_pin_transition;
+    index_1 ("0.05, 0.3, 1");
+    index_2 ("0.05, 0.3, 1");
+  }
+  lu_table_template (vyges_macro_delay) {
+    variable_1 : input_net_transition;
+    variable_2 : total_output_net_capacitance;
+    index_1 ("0.05, 0.3, 1");
+    index_2 ("0.001, 0.01, 0.05");
+  }
+  lu_table_template (vyges_macro_load) {
+    variable_1 : total_output_net_capacitance;
+    index_1 ("0.001, 0.01, 0.05");
+  }
+  cell (t_sram) {
+    area : 1000.5000;
+    is_macro_cell : true;
+    interface_timing : true;
+    dont_touch : true;
+    dont_use : true;
+    memory () {
+      type : ram;
+      address_width : 2;
+      word_width : 2;
+    }
+    pg_pin (VPWR) {
+      voltage_name : VPWR;
+      pg_type : primary_power;
+    }
+    pg_pin (VGND) {
+      voltage_name : VGND;
+      pg_type : primary_ground;
+    }
+    pin (CLK) {
+      direction : input;
+      clock : true;
+      capacitance : 0.004200;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      min_period : 8.0000;
+      min_pulse_width_high : 4.0000;
+      min_pulse_width_low : 4.0000;
+    }
+    pin (CSB) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (WEB) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (A0) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (A1) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (D0) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (D1) {
+      direction : input;
+      capacitance : 0.001800;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.100000, 0.200000, 0.300000", \
+            "0.110000, 0.210000, 0.310000", \
+            "0.120000, 0.220000, 0.320000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.150000, 0.250000, 0.350000", \
+            "0.160000, 0.260000, 0.360000", \
+            "0.170000, 0.270000, 0.370000" );
+        }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.010000, 0.020000, 0.030000", \
+            "0.040000, 0.050000, 0.060000", \
+            "0.070000, 0.080000, 0.090000" );
+        }
+        fall_constraint (vyges_macro_constraint) {
+          values ( \
+            "0.020000, 0.030000, 0.040000", \
+            "0.050000, 0.060000, 0.070000", \
+            "0.080000, 0.090000, 0.100000" );
+        }
+      }
+    }
+    pin (Q0) {
+      direction : output;
+      max_capacitance : 0.05;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : falling_edge;
+        timing_sense : non_unate;
+        cell_rise (vyges_macro_load) {
+          values ( \
+            "2.500000, 2.600000, 2.900000" );
+        }
+        rise_transition (vyges_macro_load) {
+          values ( \
+            "0.050000, 0.120000, 0.400000" );
+        }
+        cell_fall (vyges_macro_load) {
+          values ( \
+            "2.400000, 2.500000, 2.800000" );
+        }
+        fall_transition (vyges_macro_load) {
+          values ( \
+            "0.040000, 0.100000, 0.350000" );
+        }
+      }
+    }
+    pin (Q1) {
+      direction : output;
+      max_capacitance : 0.05;
+      related_power_pin : VPWR;
+      related_ground_pin : VGND;
+      timing () {
+        related_pin : "CLK";
+        timing_type : falling_edge;
+        timing_sense : non_unate;
+        cell_rise (vyges_macro_load) {
+          values ( \
+            "2.500000, 2.600000, 2.900000" );
+        }
+        rise_transition (vyges_macro_load) {
+          values ( \
+            "0.050000, 0.120000, 0.400000" );
+        }
+        cell_fall (vyges_macro_load) {
+          values ( \
+            "2.400000, 2.500000, 2.800000" );
+        }
+        fall_transition (vyges_macro_load) {
+          values ( \
+            "0.040000, 0.100000, 0.350000" );
+        }
+      }
+    }
+  }
+}

@@ -30,3 +30,18 @@ path = "src/main.rs"
 [lib]
 name = "vyges_char"
 path = "src/lib.rs"
+
+# The shared lint list (vyges-tools-internal docs/rust-style-guide.md §7); no unsafe in this crate.
+[lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+ptr_arg = "warn"
+borrowed_box = "warn"
+len_without_is_empty = "warn"
+new_without_default = "warn"
+wrong_self_convention = "warn"
+should_implement_trait = "warn"
+type_complexity = "allow"

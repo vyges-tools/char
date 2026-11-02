@@ -295,6 +295,41 @@ parameter, so:
 output table-by-table against the foundry reference `.lib` is the recommended
 way to confirm a characterization is in tolerance.
 
+### Hard macros: SRAMs and other clocked blocks (`macro`)
+
+A memory macro's interface is timed differently from a standard cell: its inputs are captured on
+one clock edge and, in a self-timed read, its outputs launch on the other; its clock pin carries a
+minimum period and pulse widths; the timer should know it is a macro and a memory. `vyges-char
+macro` writes that Liberty view from the macro's **measured** interface timing — the setup and hold
+of its capture stage, its clock-to-output delay over load, the shortest period that still works —
+however they were measured (whole-block SPICE, a characterized capture flop with the block's own
+clock tree):
+
+```bash
+vyges-char macro sram_256x32__tt.json -o sram_256x32__tt_025C_1v80.lib
+```
+
+The input is a small JSON document (schema `vyges-char-macro/1`; units ns, pF, V, °C):
+
+| key | what |
+| --- | --- |
+| `schema`, `library`, `cell`, `area`, `nom_voltage`, `nom_temperature` | identity and corner |
+| `slew_thresholds_pct` | `[lower, upper]` the transitions were measured at — **required** |
+| `slews`, `loads` | the table axes (strictly increasing) |
+| `memory` (optional) | `{type: ram\|rom, address_width, word_width}` → a `memory` group |
+| `pg_pins` (optional) | `primary_power` / `primary_ground` pins → `pg_pin`, `voltage_map`, related supplies |
+| `clock` | `pin`, `capacitance`, `min_period`, `min_pulse_width_high`, `min_pulse_width_low` |
+| `inputs[]` | `pins`, `capacitance`, `clock_edge`, `setup_rise/fall`, `hold_rise/fall` — each table rows = clock transition, columns = data transition |
+| `outputs[]` | `pins`, `clock_edge`, `max_capacitance`, `cell_rise/fall`, `rise/fall_transition` — one row (over load) or rows = clock transition |
+
+Each pin group names **its own clock edge** (inputs `setup_rising`/`hold_rising`, outputs
+`falling_edge` for a self-timed SRAM read); the cell is `is_macro_cell` with `interface_timing`.
+No `min/max_clock_tree_path` arcs are written: the numbers are taken at the macro's clock pin with
+its internal clock buffering included, and declaring the tree as well would count it twice under
+ideal clocks. A document that is inconsistent — a table of the wrong shape, a pin in two groups, a
+pulse width longer than the period, a delay at or below zero — is an error (exit 2), never a
+library.
+
 ## Research: predict the grid instead of simulating it — experiment with us
 
 Characterization's cost is the **SPICE sweep**: one simulation per `(slew, load)`
@@ -358,7 +393,8 @@ Findings from either cohort may shape where this goes.
 
 `vyges-char` operates on the **standard-cell digital abstraction** — it produces **Liberty
 standard-cell timing models** (NLDM/CCS): per-arc delay and transition tables swept over input
-slew × output load, plus sequential setup/hold constraints. That makes it a **digital sign-off**
+slew × output load, plus sequential setup/hold constraints, and the interface view of hard macros (SRAMs) from
+their measured timing. That makes it a **digital sign-off**
 engine: it characterizes the discrete, characterizable cells a digital library is built from. It
 does **not** apply to analog / mixed-signal blocks — their continuous behavior has no
 standard-cell or Liberty-arc analogue, so there are no timing arcs to sweep. For analog /

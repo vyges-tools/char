@@ -35,6 +35,11 @@ usage:
   vyges loom char surrogate [JOB]  [--degree D] [--metric M] [--log] [--json]
                                                        fit a CPU surrogate on a grid subset,
                                                        report held-out error (no JOB = demo)
+  vyges loom char macro   TIMING.json [-o OUT]   Liberty for a hard macro (SRAM, register file)
+                                                       from its measured interface timing
+                                                       (schema vyges-char-macro/1): each pin group
+                                                       on its own clock edge, min period and pulse
+                                                       widths, is_macro_cell, memory group
   vyges loom char check   JOB
   vyges loom char demo    [-o OUT] [--json]
 
@@ -546,6 +551,36 @@ pub fn main() {
                 ),
                 &cli,
             );
+        }
+        "macro" => {
+            let Some(path) = cli.positionals.get(1) else {
+                eprintln!("usage: vyges-char macro TIMING.json [-o OUT]");
+                exit(2);
+            };
+            let text = match std::fs::read_to_string(path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: {path}: {e}");
+                    exit(2);
+                }
+            };
+            match vyges_char::macro_cell::MacroCell::from_json(&text) {
+                Ok(m) => {
+                    write_out(&vyges_char::macro_cell::render(&m), &cli);
+                    if !cli.quiet {
+                        let ins: usize = m.inputs.iter().map(|g| g.pins.len()).sum();
+                        let outs: usize = m.outputs.iter().map(|g| g.pins.len()).sum();
+                        eprintln!(
+                            "macro {}: {ins} inputs, {outs} outputs, min_period {} ns",
+                            m.cell, m.clock.min_period
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: {path}: {e}");
+                    exit(2);
+                }
+            }
         }
         "check" => {
             let Some(path) = cli.positionals.get(1) else {

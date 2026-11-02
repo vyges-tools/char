@@ -1,3 +1,4 @@
 /target
 *.lib
 dist/
+!tests/golden/*.lib
