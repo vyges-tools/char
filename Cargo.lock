@@ -155,8 +155,8 @@ dependencies = [
 
 [[package]]
 name = "vyges-events"
-version = "0.1.53"
-source = "git+https://github.com/vyges-tools/events.git?branch=main#1fc532e533e9ad9232d42b541eff9718d03cd680"
+version = "0.1.54"
+source = "git+https://github.com/vyges-tools/events.git?branch=main#a1cf6c92afceb947965bdf1144104049bc14aaa9"
 dependencies = [
  "serde",
  "serde_json",
