@@ -1,5 +1,7 @@
 # vyges-char
 
+**[Download Loom](https://vyges.com/products/vyges-cli/#install)** · install the free [Vyges CLI](https://vyges.com/products/vyges-cli/), then `vyges install loom`
+
 Standard-cell **timing characterization**: a cell's SPICE netlist in, a Liberty
 (`.lib`) timing model out.
 
