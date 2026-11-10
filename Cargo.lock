@@ -147,7 +147,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "vyges-char"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "vyges-events",
  "vyges-loom",
@@ -164,8 +164,8 @@ dependencies = [
 
 [[package]]
 name = "vyges-loom"
-version = "0.1.54"
-source = "git+https://github.com/vyges-tools/loom?branch=main#8a38c94ac2c8816cb77e8e131b13ce10062149c0"
+version = "0.1.55"
+source = "git+https://github.com/vyges-tools/loom?branch=main#5a5b8993a293df2bc14c2c372edf71a5a8e136ca"
 dependencies = [
  "miniz_oxide",
  "regex",
