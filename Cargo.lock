@@ -194,7 +194,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "vyges-char"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "libmimalloc-sys",
  "mimalloc",
@@ -204,17 +204,18 @@ dependencies = [
 
 [[package]]
 name = "vyges-events"
-version = "0.1.54"
-source = "git+https://github.com/vyges-tools/events.git?branch=main#a1cf6c92afceb947965bdf1144104049bc14aaa9"
+version = "0.1.55"
+source = "git+https://github.com/vyges-tools/events.git?branch=main#99cbea768cd047d1c028c1d38b441da6be0b9b67"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "vyges-loom"
-version = "0.1.55"
-source = "git+https://github.com/vyges-tools/loom?branch=main#5a5b8993a293df2bc14c2c372edf71a5a8e136ca"
+version = "0.1.56"
+source = "git+https://github.com/vyges-tools/loom?branch=main#743d6adf0af62b080b897587be286e28bcc7de6a"
 dependencies = [
  "miniz_oxide",
  "regex",
