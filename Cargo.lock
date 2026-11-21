@@ -204,8 +204,8 @@ dependencies = [
 
 [[package]]
 name = "vyges-events"
-version = "0.1.55"
-source = "git+https://github.com/vyges-tools/events.git?branch=main#99cbea768cd047d1c028c1d38b441da6be0b9b67"
+version = "0.1.56"
+source = "git+https://github.com/vyges-tools/events.git?branch=main#fbeaba52516c5a210cf37648edd1327f28596420"
 dependencies = [
  "libc",
  "serde",
